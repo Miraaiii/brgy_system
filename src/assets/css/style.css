@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&family=Sekuya&display=swap');
 @charset "UTF-8";
 /*-------------------------------------------------------------------
   ===== Table of Contents =====
@@ -12800,6 +12801,12 @@ textarea.is-invalid.tt-hint, .select2-container--default .select2-selection--sin
   border: var(--bs-card-border-width) solid var(--bs-card-border-color);
   border-radius: var(--bs-card-border-radius);
 }
+
+.stat-card:hover {
+  box-shadow: 0 4px 12px rgba(0,0,0,.08), 0 2px 6px rgba(0,0,0,.04);
+  transition: 0.25s cubic-bezier(.4,0,.2,1);
+  transform: scale(1.02);
+}
 .card > hr {
   margin-right: 0;
   margin-left: 0;
@@ -24114,7 +24121,7 @@ dl li {
   background: #191c24;
   font-weight: normal;
   padding: 0;
-  width: 244px;
+  width: 260px;
   z-index: 11;
   transition: width 0.25s ease, background 0.25s ease;
   -webkit-transition: width 0.25s ease, background 0.25s ease;
@@ -24126,9 +24133,15 @@ dl li {
   -webkit-transition: width 0.25s ease, background 0.25s ease;
   -moz-transition: width 0.25s ease, background 0.25s ease;
   -ms-transition: width 0.25s ease, background 0.25s ease;
-  background: #191c24;
   width: 244px;
-  height: 70px;
+
+  /* FIX */
+  height: 100px;
+  padding: 10px 0;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 @media (max-width: 991px) {
   .sidebar .sidebar-brand-wrapper {
@@ -24136,13 +24149,72 @@ dl li {
   }
 }
 .sidebar .sidebar-brand-wrapper .sidebar-brand {
-  color: #38425e;
-  font-size: 1.5rem;
-  line-height: 48px;
-  margin-right: 0;
-  padding: 0rem 0rem 0rem 1.3rem;
-  width: 100%;
+  padding: 0;
+  margin: 0;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
+
+img.main-logo {
+  width: 90px;
+  height: 90px;
+  object-fit: contain;
+}
+
+.sidebar .sidebar-brand-wrapper {
+  background: #191c24;
+  width: 244px;
+  height: 95px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar-brand.brand-logo img {
+  width: 90px;
+  height: auto;
+  object-fit: contain;
+}
+
+.sidebar-brand-wrapper {
+    width: 244px !important;
+    height: 95px !important;
+
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+
+    padding: 0 !important;
+}
+
+.sidebar-brand-wrapper .sidebar-brand {
+    width: auto !important;
+    height: auto !important;
+
+    padding: 0 !important;
+    margin: 0 !important;
+
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+.sidebar-brand-wrapper .sidebar-brand img,
+.sidebar-brand-wrapper img.main-logo {
+    width: 85px !important;
+    height: 85px !important;
+    object-fit: contain !important;
+    display: block !important;
+}
+
+.sidebar .sidebar-brand-wrapper .sidebar-brand img {
+  width: 90px;
+  object-fit: contain;
+}
+
 .sidebar .sidebar-brand-wrapper .sidebar-brand:active, .sidebar .sidebar-brand-wrapper .sidebar-brand:focus, .sidebar .sidebar-brand-wrapper .sidebar-brand:hover {
   color: #252b3e;
 }
@@ -24152,6 +24224,9 @@ dl li {
   height: 28px;
   margin: auto;
   vertical-align: middle;
+}
+.sidebar-brand .brand-logo {
+  height: 100px;
 }
 .sidebar .sidebar-brand-wrapper .sidebar-brand.brand-logo-mini {
   display: none;
@@ -24629,6 +24704,12 @@ dl li {
     position: absolute;
     right: 10px;
   }
+  .profile-desc p {
+    font-family: "Sekuya", system-ui;
+    font-weight: 400;
+    font-style: normal;
+    font-size: 13px;
+  }
   .sidebar-mini:not(.sidebar-icon-only) .sidebar .nav:not(.sub-menu) > .nav-item {
     border-bottom: 1px solid rgba(108, 114, 147, 0.2);
   }
@@ -24914,6 +24995,13 @@ dl li {
 .rtl .sidebar .sidebar-brand-wrapper .sidebar-brand {
   padding: 0.25rem 1.3rem 0rem 0rem;
 }
+
+.sidebar-brand img {
+  width: 100px;
+  height: 100px;
+  object-fit: contain;
+}
+
 .rtl .sidebar .nav {
   padding-right: 0;
 }
@@ -25134,5 +25222,13 @@ dl li {
 
 .blank-page {
   height: 89vh;
+}
+
+.stat-icon {
+  width: 46px; height: 46px;
+  border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
 }
 /*# sourceMappingURL=maps/style.css.map */
