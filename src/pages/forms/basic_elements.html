@@ -307,155 +307,421 @@
         </nav>
         <!-- partial -->
         <div class="main-panel">
+
           <div class="content-wrapper">
-            <div class="page-header">
-              <h3 class="page-title"> Form elements </h3>
-              <nav aria-label="breadcrumb">
-                <ol class="breadcrumb">
-                  <li class="breadcrumb-item"><a href="#">Forms</a></li>
-                  <li class="breadcrumb-item active" aria-current="page">Form elements</li>
-                </ol>
-              </nav>
+
+            <!-- PAGE HEADER -->
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
+
+              <div>
+                <h3 class="page-title mb-1">
+                  Residents Management
+                </h3>
+
+                <p class="text-muted-custom mb-0">
+                  Manage barangay residents records
+                </p>
+              </div>
+
+              <button class="btn btn-primary"
+                      data-bs-toggle="modal"
+                      data-bs-target="#addResidentModal">
+
+                <i class="bi bi-plus-circle me-1"></i>
+                Add Resident
+
+              </button>
+
             </div>
-            <div class="row">
-              <div class="col-md-6 grid-margin stretch-card">
-                <div class="card">
-                  <div class="card-body">
-                    <h4 class="card-title">Default form</h4>
-                    <p class="card-description"> Basic form layout </p>
-                    <form class="forms-sample">
-                      <div class="form-group">
-                        <label for="exampleInputUsername1">Username</label>
-                        <input type="text" class="form-control" id="exampleInputUsername1" placeholder="Username">
-                      </div>
-                      <div class="form-group">
-                        <label for="exampleInputEmail1">Email address</label>
-                        <input type="email" class="form-control" id="exampleInputEmail1" placeholder="Email">
-                      </div>
-                      <div class="form-group">
-                        <label for="exampleInputPassword1">Password</label>
-                        <input type="password" class="form-control" id="exampleInputPassword1" placeholder="Password">
-                      </div>
-                      <div class="form-group">
-                        <label for="exampleInputConfirmPassword1">Confirm Password</label>
-                        <input type="password" class="form-control" id="exampleInputConfirmPassword1" placeholder="Password">
-                      </div>
-                      <div class="form-check form-check-flat form-check-primary">
-                        <label class="form-check-label">
-                          <input type="checkbox" class="form-check-input"> Remember me </label>
-                      </div>
-                      <button type="submit" class="btn btn-primary me-2">Submit</button>
-                      <button class="btn btn-dark">Cancel</button>
-                    </form>
+
+            <!-- CARD -->
+            <div class="card">
+
+              <div class="card-body">
+
+                <!-- TOP BAR -->
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
+
+                  <!-- SEARCH -->
+                  <div class="search-box"
+                      style="max-width:320px; width:100%;">
+
+                    <i class="bi bi-search"></i>
+
+                    <input type="text"
+                          class="form-control"
+                          placeholder="Search resident...">
+
                   </div>
+
                 </div>
-              </div>
-              <div class="col-md-6 grid-margin stretch-card">
-                <div class="card">
-                  <div class="card-body">
-                    <h4 class="card-title">Horizontal Form</h4>
-                    <p class="card-description"> Horizontal form layout </p>
-                    <form class="forms-sample">
-                      <div class="form-group row">
-                        <label for="exampleInputUsername2" class="col-sm-3 col-form-label">Email</label>
-                        <div class="col-sm-9">
-                          <input type="text" class="form-control" id="exampleInputUsername2" placeholder="Username">
-                        </div>
-                      </div>
-                      <div class="form-group row">
-                        <label for="exampleInputEmail2" class="col-sm-3 col-form-label">Email</label>
-                        <div class="col-sm-9">
-                          <input type="email" class="form-control" id="exampleInputEmail2" placeholder="Email">
-                        </div>
-                      </div>
-                      <div class="form-group row">
-                        <label for="exampleInputMobile" class="col-sm-3 col-form-label">Mobile</label>
-                        <div class="col-sm-9">
-                          <input type="text" class="form-control" id="exampleInputMobile" placeholder="Mobile number">
-                        </div>
-                      </div>
-                      <div class="form-group row">
-                        <label for="exampleInputPassword2" class="col-sm-3 col-form-label">Password</label>
-                        <div class="col-sm-9">
-                          <input type="password" class="form-control" id="exampleInputPassword2" placeholder="Password">
-                        </div>
-                      </div>
-                      <div class="form-group row">
-                        <label for="exampleInputConfirmPassword2" class="col-sm-3 col-form-label">Re Password</label>
-                        <div class="col-sm-9">
-                          <input type="password" class="form-control" id="exampleInputConfirmPassword2" placeholder="Password">
-                        </div>
-                      </div>
-                      <div class="form-check form-check-flat form-check-primary">
-                        <label class="form-check-label">
-                          <input type="checkbox" class="form-check-input"> Remember me </label>
-                      </div>
-                      <button type="submit" class="btn btn-primary me-2">Submit</button>
-                      <button class="btn btn-dark">Cancel</button>
-                    </form>
-                  </div>
-                </div>
-              </div>
-              <div class="col-12 grid-margin stretch-card">
-                <div class="card">
-                  <div class="card-body">
-                    <h4 class="card-title">Basic form elements</h4>
-                    <p class="card-description"> Basic form elements </p>
-                    <form class="forms-sample">
-                      <div class="form-group">
-                        <label for="exampleInputName1">Name</label>
-                        <input type="text" class="form-control" id="exampleInputName1" placeholder="Name">
-                      </div>
-                      <div class="form-group">
-                        <label for="exampleInputEmail3">Email address</label>
-                        <input type="email" class="form-control" id="exampleInputEmail3" placeholder="Email">
-                      </div>
-                      <div class="form-group">
-                        <label for="exampleInputPassword4">Password</label>
-                        <input type="password" class="form-control" id="exampleInputPassword4" placeholder="Password">
-                      </div>
-                      <div class="form-group">
-                        <label for="exampleSelectGender">Gender</label>
-                        <select class="form-select" id="exampleSelectGender">
-                          <option>Male</option>
-                          <option>Female</option>
-                        </select>
-                      </div>
-                      <div class="form-group">
-                        <label>File upload</label>
-                        <input type="file" name="img[]" class="file-upload-default">
-                        <div class="input-group col-xs-12 d-flex align-items-center">
-                          <input type="text" class="form-control file-upload-info" disabled placeholder="Upload Image">
-                          <span class="input-group-append ms-2">
-                            <button class="file-upload-browse btn btn-primary" type="button">Upload</button>
+
+                <!-- TABLE -->
+                <div class="table-responsive">
+
+                  <table class="table table-hover align-middle">
+
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Resident</th>
+                        <th>Birth Date</th>
+                        <th>Sex</th>
+                        <th>Status</th>
+                        <th>Contact</th>
+                        <th>Voter</th>
+                        <th>PWD</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+
+                      <!-- SAMPLE ROW -->
+                      <tr>
+
+                        <td>1</td>
+
+                        <td>
+
+                          <div class="fw-semibold">
+                            Juan Dela Cruz
+                          </div>
+
+                          <small class="text-muted-custom">
+                            Single • Filipino
+                          </small>
+
+                        </td>
+
+                        <td>May 10, 2001</td>
+
+                        <td>Male</td>
+
+                        <td>
+
+                          <span class="badge-active">
+                            Active
                           </span>
-                        </div>
-                      </div>
-                      <div class="form-group">
-                        <label for="exampleInputCity1">City</label>
-                        <input type="text" class="form-control" id="exampleInputCity1" placeholder="Location">
-                      </div>
-                      <div class="form-group">
-                        <label for="exampleTextarea1">Textarea</label>
-                        <textarea class="form-control" id="exampleTextarea1" rows="4"></textarea>
-                      </div>
-                      <button type="submit" class="btn btn-primary me-2">Submit</button>
-                      <button class="btn btn-dark">Cancel</button>
-                    </form>
-                  </div>
+
+                        </td>
+
+                        <td>09123456789</td>
+
+                        <td>
+                          <span class="badge bg-primary">
+                            Yes
+                          </span>
+                        </td>
+
+                        <td>
+                          <span class="badge bg-secondary">
+                            No
+                          </span>
+                        </td>
+
+                        <td>
+
+                          <div class="d-flex gap-2">
+
+                            <!-- EDIT -->
+                            <button class="btn btn-warning btn-sm"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#editResidentModal">
+
+                              <i class="bi bi-pencil-square"></i>
+
+                            </button>
+
+                            <!-- DELETE -->
+                            <button class="btn btn-danger btn-sm">
+
+                              <i class="bi bi-trash"></i>
+
+                            </button>
+
+                          </div>
+
+                        </td>
+
+                      </tr>
+
+                    </tbody>
+
+                  </table>
+
                 </div>
+
               </div>
+
             </div>
+
           </div>
-          <!-- content-wrapper ends -->
-          <!-- partial:../../partials/_footer.html -->
-          <footer class="footer">
-            <div class="d-sm-flex justify-content-center justify-content-sm-between">
-              <span class="text-muted text-center text-sm-left d-block d-sm-inline-block">Copyright © 2024 <a href="https://www.bootstrapdash.com/" target="_blank">BootstrapDash</a>. All rights reserved.</span>
-              <span class="text-muted float-none float-sm-end d-block mt-1 mt-sm-0 text-center"> <span class="text-muted float-none float-sm-end d-block mt-1 mt-sm-0 text-center">Hand-crafted & made with <i class="mdi mdi-heart text-danger"></i></span> <i class="mdi mdi-heart text-danger"></i></span>
-            </div>
-          </footer>
+
           <!-- partial -->
+
+        </div>
+
+        <!-- ADD RESIDENT MODAL -->
+        <div class="modal fade"
+            id="addResidentModal"
+            tabindex="-1">
+
+          <div class="modal-dialog modal-xl">
+
+            <div class="modal-content">
+
+              <div class="modal-header">
+
+                <h5 class="modal-title">
+                  Add Resident
+                </h5>
+
+                <button type="button"
+                        class="btn-close btn-close-white"
+                        data-bs-dismiss="modal"></button>
+
+              </div>
+
+              <form>
+
+                <div class="modal-body">
+
+                  <div class="row g-3">
+
+                    <!-- LAST NAME -->
+                    <div class="col-md-4">
+
+                      <label class="form-label">
+                        Last Name
+                      </label>
+
+                      <input type="text"
+                            class="form-control"
+                            placeholder="Enter last name">
+
+                    </div>
+
+                    <!-- FIRST NAME -->
+                    <div class="col-md-4">
+
+                      <label class="form-label">
+                        First Name
+                      </label>
+
+                      <input type="text"
+                            class="form-control"
+                            placeholder="Enter first name">
+
+                    </div>
+
+                    <!-- MIDDLE NAME -->
+                    <div class="col-md-4">
+
+                      <label class="form-label">
+                        Middle Name
+                      </label>
+
+                      <input type="text"
+                            class="form-control"
+                            placeholder="Enter middle name">
+
+                    </div>
+
+                    <!-- BIRTH DATE -->
+                    <div class="col-md-4">
+
+                      <label class="form-label">
+                        Birth Date
+                      </label>
+
+                      <input type="date"
+                            class="form-control">
+
+                    </div>
+
+                    <!-- BIRTH PLACE -->
+                    <div class="col-md-4">
+
+                      <label class="form-label">
+                        Birth Place
+                      </label>
+
+                      <input type="text"
+                            class="form-control"
+                            placeholder="Enter birthplace">
+
+                    </div>
+
+                    <!-- NATIONALITY -->
+                    <div class="col-md-4">
+
+                      <label class="form-label">
+                        Nationality
+                      </label>
+
+                      <input type="text"
+                            class="form-control"
+                            placeholder="Enter nationality">
+
+                    </div>
+
+                    <!-- SEX -->
+                    <div class="col-md-4">
+
+                      <label class="form-label">
+                        Sex
+                      </label>
+
+                      <select class="form-select">
+                        <option>Male</option>
+                        <option>Female</option>
+                      </select>
+
+                    </div>
+
+                    <!-- CIVIL STATUS -->
+                    <div class="col-md-4">
+
+                      <label class="form-label">
+                        Civil Status
+                      </label>
+
+                      <select class="form-select">
+                        <option>Single</option>
+                        <option>Married</option>
+                        <option>Widowed</option>
+                        <option>Separated</option>
+                      </select>
+
+                    </div>
+
+                    <!-- CONTACT -->
+                    <div class="col-md-4">
+
+                      <label class="form-label">
+                        Contact Number
+                      </label>
+
+                      <input type="text"
+                            class="form-control"
+                            placeholder="09XXXXXXXXX">
+
+                    </div>
+
+                    <!-- STATUS -->
+                    <div class="col-md-4">
+
+                      <label class="form-label">
+                        Resident Status
+                      </label>
+
+                      <select class="form-select">
+                        <option>Active</option>
+                        <option>Deceased</option>
+                        <option>Transferred</option>
+                      </select>
+
+                    </div>
+
+                    <!-- CHECKBOXES -->
+                    <div class="col-md-12">
+
+                      <div class="row mt-2">
+
+                        <div class="col-md-3">
+
+                          <div class="form-check">
+
+                            <input class="form-check-input"
+                                  type="checkbox">
+
+                            <label class="form-check-label">
+                              Registered Voter
+                            </label>
+
+                          </div>
+
+                        </div>
+
+                        <div class="col-md-3">
+
+                          <div class="form-check">
+
+                            <input class="form-check-input"
+                                  type="checkbox">
+
+                            <label class="form-check-label">
+                              PWD
+                            </label>
+
+                          </div>
+
+                        </div>
+
+                        <div class="col-md-3">
+
+                          <div class="form-check">
+
+                            <input class="form-check-input"
+                                  type="checkbox">
+
+                            <label class="form-check-label">
+                              Solo Parent
+                            </label>
+
+                          </div>
+
+                        </div>
+
+                        <div class="col-md-3">
+
+                          <div class="form-check">
+
+                            <input class="form-check-input"
+                                  type="checkbox">
+
+                            <label class="form-check-label">
+                              4Ps Beneficiary
+                            </label>
+
+                          </div>
+
+                        </div>
+
+                      </div>
+
+                    </div>
+
+                  </div>
+
+                </div>
+
+                <div class="modal-footer">
+
+                  <button type="button"
+                          class="btn btn-secondary"
+                          data-bs-dismiss="modal">
+
+                    Cancel
+
+                  </button>
+
+                  <button type="submit"
+                          class="btn btn-primary">
+
+                    Save Resident
+
+                  </button>
+
+                </div>
+
+              </form>
+
+            </div>
+
+          </div>
+
         </div>
         <!-- main-panel ends -->
       </div>
