@@ -249,7 +249,10 @@ $services = [
     =========================== */
     .hero {
       min-height: 100vh;
-      background: var(--navy);
+      background: linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.45)), url('src/assets/images/system_bg.png');
+      background-size: cover;
+      background-position: center;
+      background-repeat: no-repeat;
       position: relative;
       display: flex;
       align-items: center;
@@ -1021,6 +1024,18 @@ $services = [
       .step-connector { display: none; }
       .footer-bottom { flex-direction: column; text-align: center; }
     }
+
+    @media (max-width: 575px) {
+      html, body { width: 100%; box-sizing: border-box; overflow-x: hidden; } 
+      .hero-content { padding: 3rem 1.5rem 2.5rem; }
+      .hero-actions { flex-direction: column; }
+      .hero-actions a { text-align: center; justify-content: center; }
+      .hero-stat { min-width: 100px; }
+      section { padding: 56px 0; }
+      .cta-box { padding: 2.5rem 1.5rem; }
+      .step-connector { display: none; }
+      .footer-bottom { flex-direction: column; text-align: center; }
+    }
   </style>
 </head>
 <body>
@@ -1076,12 +1091,9 @@ $services = [
 <section class="hero" id="home" aria-labelledby="hero-title">
   <div class="hero-pattern" aria-hidden="true"></div>
   <div class="hero-grid-lines" aria-hidden="true"></div>
-  <div class="container">
-    <div class="row align-items-center g-5">
+  <div class="container align-items-center">
+    <div class="row  g-5">
       <div class="col-lg-6 hero-content" data-aos="fade-right" data-aos-duration="900">
-        <div class="hero-eyebrow">
-          <i class="bi bi-geo-alt-fill"></i> Official Barangay Website
-        </div>
         <h1 class="hero-title" id="hero-title">
           Barangay Sta.<br>
           <span>Rosa 1</span><br>
