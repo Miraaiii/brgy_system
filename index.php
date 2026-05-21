@@ -1062,8 +1062,7 @@ $services = [
     </div>
 
     <div class="nav-cta">
-      <a href="login.php" class="btn-nav-login">Log in</a>
-      <a href="register.php" class="btn-nav-register"><i class="bi bi-person-plus-fill"></i> Register</a>
+      <a href="src/pages/login-register/forms.php" class="btn-nav-register"><i class="bi bi-person-plus-fill"></i> Register</a>
     </div>
 
     <button class="nav-toggle" id="navToggle" aria-label="Toggle menu" aria-expanded="false">
