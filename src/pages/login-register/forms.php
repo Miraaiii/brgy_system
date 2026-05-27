@@ -41,37 +41,40 @@
           <p class="panel__sub">Join us — it only takes a minute</p>
         </div>
 
-        <div class="form-group">
-          <label class="form-label" for="su-name">
-            <i class="fa-regular fa-user"></i> Full Name
-          </label>
-          <input class="form-input" id="su-name" type="text" placeholder="Alex Johnson" autocomplete="name" />
-          <span class="input-line"></span>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label" for="su-email">
-            <i class="fa-regular fa-envelope"></i> Email
-          </label>
-          <input class="form-input" id="su-email" type="email" placeholder="alex@example.com" autocomplete="email" />
-          <span class="input-line"></span>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label" for="su-pass">
-            <i class="fa-solid fa-lock"></i> Password
-          </label>
-          <div class="input-wrap">
-            <input class="form-input" id="su-pass" type="password" placeholder="••••••••" autocomplete="new-password" />
-            <button class="eye-btn" data-target="su-pass" aria-label="Toggle password"><i class="fa-regular fa-eye"></i></button>
+        <form action="../backend/login.php" method="post">
+          <div class="form-group">
+            <label class="form-label" for="su-name">
+              <i class="fa-regular fa-user"></i> Full Name
+            </label>
+            <input class="form-input" id="su-name" type="text" placeholder="Alex Johnson" autocomplete="name" />
+            <span class="input-line"></span>
           </div>
-          <span class="input-line"></span>
-        </div>
 
-        <button class="btn btn--primary" id="signupBtn">
-          <span>Sign Up</span>
-          <i class="fa-solid fa-arrow-right"></i>
-        </button>
+          <div class="form-group">
+            <label class="form-label" for="su-email">
+              <i class="fa-regular fa-envelope"></i> Email
+            </label>
+            <input class="form-input" id="su-email" type="email" placeholder="alex@example.com" autocomplete="email" />
+            <span class="input-line"></span>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="su-pass">
+              <i class="fa-solid fa-lock"></i> Password
+            </label>
+            <div class="input-wrap">
+              <input class="form-input" id="su-pass" type="password" placeholder="••••••••" autocomplete="new-password" />
+              <button class="eye-btn" data-target="su-pass" aria-label="Toggle password"><i class="fa-regular fa-eye"></i></button>
+            </div>
+            <span class="input-line"></span>
+          </div>
+
+          <button class="btn btn--primary" id="signupBtn">
+            <span>Sign Up</span>
+            <i class="fa-solid fa-arrow-right"></i>
+          </button>
+        </form>
+        
 
         <p class="switch-text">Already have an account?
           <button class="switch-link" id="goLogin">Log In</button>

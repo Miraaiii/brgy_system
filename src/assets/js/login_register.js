@@ -100,47 +100,6 @@ function showToast(message) {
   }, 2800);
 }
 
-/* Basic form submission feedback */
-signupBtn.addEventListener('click', () => {
-  const name  = document.getElementById('su-name').value.trim();
-  const email = document.getElementById('su-email').value.trim();
-  const pass  = document.getElementById('su-pass').value;
-
-  if (!name || !email || !pass) {
-    showToast('⚠️  Please fill in all fields.');
-    shakePanel(signupPanel);
-    return;
-  }
-  if (!isValidEmail(email)) {
-    showToast('⚠️  Please enter a valid email.');
-    shakePanel(signupPanel);
-    return;
-  }
-  if (pass.length < 6) {
-    showToast('⚠️  Password must be 6+ characters.');
-    shakePanel(signupPanel);
-    return;
-  }
-  showToast('🎉  Account created! Welcome aboard.');
-});
-
-loginBtn.addEventListener('click', () => {
-  const email = document.getElementById('li-email').value.trim();
-  const pass  = document.getElementById('li-pass').value;
-
-  if (!email || !pass) {
-    showToast('⚠️  Please fill in all fields.');
-    shakePanel(loginPanel);
-    return;
-  }
-  if (!isValidEmail(email)) {
-    showToast('⚠️  Please enter a valid email.');
-    shakePanel(loginPanel);
-    return;
-  }
-  showToast('✅  Logged in successfully!');
-});
-
 /* Email validator */
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -168,6 +127,164 @@ shakeStyle.textContent = `
   }
 `;
 document.head.appendChild(shakeStyle);
+
+/* ══════════════════════════════════════
+   AUTH SUBMIT HANDLERS
+══════════════════════════════════════ */
+
+// SIGNUP
+signupBtn.addEventListener('click', async () => {
+
+  const name  = document.getElementById('su-name').value.trim();
+  const email = document.getElementById('su-email').value.trim();
+  const pass  = document.getElementById('su-pass').value;
+
+  // Validation
+  if (!name || !email || !pass) {
+    showToast('⚠️ Please fill in all fields.');
+    shakePanel(signupPanel);
+    return;
+  }
+
+  if (!isValidEmail(email)) {
+    showToast('⚠️ Invalid email address.');
+    shakePanel(signupPanel);
+    return;
+  }
+
+  if (pass.length < 6) {
+    showToast('⚠️ Password must be at least 6 characters.');
+    shakePanel(signupPanel);
+    return;
+  }
+
+  try {
+
+    signupBtn.disabled = true;
+    signupBtn.innerHTML = '<span>Creating...</span>';
+
+    const response = await fetch("../../auth/register.php", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: new URLSearchParams({
+        fullname: name,
+        email: email,
+        password: pass
+      })
+    });
+
+    const data = await response.json();
+
+    if (data.status === "success") {
+
+      showToast('🎉 Account created successfully!');
+
+      // Clear fields
+      document.getElementById('su-name').value = '';
+      document.getElementById('su-email').value = '';
+      document.getElementById('su-pass').value = '';
+
+      // Switch to login
+      setTimeout(() => {
+        showLogin();
+      }, 1000);
+
+    } else {
+
+      showToast('⚠️ ' + data.message);
+      shakePanel(signupPanel);
+
+    }
+
+  } catch (error) {
+
+    showToast('❌ Server error.');
+    console.error(error);
+
+  } finally {
+
+    signupBtn.disabled = false;
+    signupBtn.innerHTML = `
+      <span>Sign Up</span>
+      <i class="fa-solid fa-arrow-right"></i>
+    `;
+  }
+});
+
+
+// LOGIN
+loginBtn.addEventListener('click', async () => {
+
+  const email = document.getElementById('li-email').value.trim();
+  const pass  = document.getElementById('li-pass').value;
+
+  // Validation
+  if (!email || !pass) {
+    showToast('⚠️ Please fill in all fields.');
+    shakePanel(loginPanel);
+    return;
+  }
+
+  if (!isValidEmail(email)) {
+    showToast('⚠️ Invalid email address.');
+    shakePanel(loginPanel);
+    return;
+  }
+
+  try {
+
+    loginBtn.disabled = true;
+    loginBtn.innerHTML = '<span>Signing In...</span>';
+
+    const response = await fetch("../../backend/login.php", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: new URLSearchParams({
+        email: email,
+        password: pass
+      })
+    });
+
+    const data = await response.json();
+
+    if (data.status === "success") {
+
+      showToast('✅ Login successful!');
+
+      setTimeout(() => {
+
+        // Redirect by role
+        if (data.role === "Captain") {
+          window.location.href = "../../pages/dashboard/index.html";
+        } else {
+          window.location.href = "../../secretary/dashboard.php";
+        }
+
+      }, 1000);
+
+    } else {
+
+      showToast('⚠️ ' + data.message);
+      shakePanel(loginPanel);
+
+    }
+
+  } catch (error) {
+    console.error(error);
+
+  } finally {
+
+    loginBtn.disabled = false;
+    loginBtn.innerHTML = `
+      <span>Log In</span>
+      <i class="fa-solid fa-arrow-right"></i>
+    `;
+  }
+});
 
 /* ══════════════════════════════════════
    6. CANVAS PARTICLE BACKGROUND
