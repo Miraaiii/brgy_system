@@ -215,12 +215,12 @@ signupBtn.addEventListener('click', async () => {
 
 
 // LOGIN
-loginBtn.addEventListener('click', async () => {
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
 
   const email = document.getElementById('li-email').value.trim();
   const pass  = document.getElementById('li-pass').value;
 
-  // Validation
   if (!email || !pass) {
     showToast('⚠️ Please fill in all fields.');
     shakePanel(loginPanel);
@@ -234,7 +234,6 @@ loginBtn.addEventListener('click', async () => {
   }
 
   try {
-
     loginBtn.disabled = true;
     loginBtn.innerHTML = '<span>Signing In...</span>';
 
@@ -252,32 +251,25 @@ loginBtn.addEventListener('click', async () => {
     const data = await response.json();
 
     if (data.status === "success") {
-
       showToast('✅ Login successful!');
 
       setTimeout(() => {
-
-        // Redirect by role
         if (data.role === "Captain") {
           window.location.href = "../../pages/dashboard/index.html";
         } else {
           window.location.href = "../../secretary/dashboard.php";
         }
-
       }, 1000);
 
     } else {
-
       showToast('⚠️ ' + data.message);
       shakePanel(loginPanel);
-
     }
 
   } catch (error) {
     console.error(error);
-
+    showToast('❌ Server error.');
   } finally {
-
     loginBtn.disabled = false;
     loginBtn.innerHTML = `
       <span>Log In</span>

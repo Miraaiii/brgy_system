@@ -33,18 +33,21 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     // Hash password
     $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
 
+    $role = "Resident";
+
     // Insert user
-    $sql = "INSERT INTO users (fullname, email, password)
-            VALUES (?, ?, ?)";
+    $sql = "INSERT INTO users (fullname, email, password, role)
+            VALUES (?, ?, ?, ?)";
 
     $stmt = mysqli_prepare($conn, $sql);
 
     mysqli_stmt_bind_param(
         $stmt,
-        "sss",
+        "ssss",
         $fullname,
         $email,
-        $hashedPassword
+        $hashedPassword,
+        $role
     );
 
     if (mysqli_stmt_execute($stmt)) {

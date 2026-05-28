@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Auth UI — Sign In / Sign Up</title>
+  <title>Register / Login</title>
 
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -14,6 +14,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
 
   <link rel="stylesheet" href="../../assets/css/login_register.css" />
+  <link rel="shortcut icon" href="../../assets/images/logo_noveleta.png" />
 </head>
 <body>
 
@@ -124,7 +125,7 @@
           <p class="panel__sub panel__sub--dark">Sign in to continue your journey</p>
         </div>
 
-        <form action="../backend/login.php" method="post">
+        <form id="loginForm" method="post">
           <div class="form-group">
             <label class="form-label form-label--dark" for="li-email">
               <i class="fa-regular fa-envelope"></i> Email
@@ -139,7 +140,7 @@
             </label>
             <div class="input-wrap">
               <input class="form-input form-input--light" id="li-pass" type="password" placeholder="••••••••" autocomplete="current-password" />
-              <button class="eye-btn eye-btn--dark" data-target="li-pass" aria-label="Toggle password"><i class="fa-regular fa-eye"></i></button>
+              <button type="button" class="eye-btn eye-btn--dark" data-target="li-pass" aria-label="Toggle password"><i class="fa-regular fa-eye"></i></button>
             </div>
             <span class="input-line input-line--dark"></span>
           </div>
@@ -153,7 +154,7 @@
             <a href="#" class="forgot-link">Forgot password?</a>
           </div>
 
-          <button class="btn btn--secondary" id="loginBtn">
+          <button type="submit" class="btn btn--secondary" id="loginBtn">
             <span>Log In</span>
             <i class="fa-solid fa-arrow-right"></i>
           </button>
