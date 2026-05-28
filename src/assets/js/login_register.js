@@ -163,7 +163,7 @@ signupBtn.addEventListener('click', async () => {
     signupBtn.disabled = true;
     signupBtn.innerHTML = '<span>Creating...</span>';
 
-    const response = await fetch("../../auth/register.php", {
+    const response = await fetch("../../backend/register.php", {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded"

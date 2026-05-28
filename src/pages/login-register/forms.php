@@ -41,12 +41,21 @@
           <p class="panel__sub">Join us — it only takes a minute</p>
         </div>
 
-        <form action="../backend/login.php" method="post">
+        <form action="../backend/register.php" method="post">
+
           <div class="form-group">
             <label class="form-label" for="su-name">
               <i class="fa-regular fa-user"></i> Full Name
             </label>
-            <input class="form-input" id="su-name" type="text" placeholder="Alex Johnson" autocomplete="name" />
+            <input 
+              class="form-input" 
+              id="su-name" 
+              name="fullname"
+              type="text" 
+              placeholder="Alex Johnson" 
+              autocomplete="name" 
+              required
+            />
             <span class="input-line"></span>
           </div>
 
@@ -54,7 +63,15 @@
             <label class="form-label" for="su-email">
               <i class="fa-regular fa-envelope"></i> Email
             </label>
-            <input class="form-input" id="su-email" type="email" placeholder="alex@example.com" autocomplete="email" />
+            <input 
+              class="form-input" 
+              id="su-email" 
+              name="email"
+              type="email" 
+              placeholder="alex@example.com" 
+              autocomplete="email" 
+              required
+            />
             <span class="input-line"></span>
           </div>
 
@@ -62,19 +79,32 @@
             <label class="form-label" for="su-pass">
               <i class="fa-solid fa-lock"></i> Password
             </label>
+
             <div class="input-wrap">
-              <input class="form-input" id="su-pass" type="password" placeholder="••••••••" autocomplete="new-password" />
-              <button class="eye-btn" data-target="su-pass" aria-label="Toggle password"><i class="fa-regular fa-eye"></i></button>
+              <input 
+                class="form-input" 
+                id="su-pass" 
+                name="password"
+                type="password" 
+                placeholder="••••••••" 
+                autocomplete="new-password" 
+                required
+              />
+
+              <button type="button" class="eye-btn" data-target="su-pass">
+                <i class="fa-regular fa-eye"></i>
+              </button>
             </div>
+
             <span class="input-line"></span>
           </div>
 
-          <button class="btn btn--primary" id="signupBtn">
+          <button class="btn btn--primary" id="signupBtn" type="submit">
             <span>Sign Up</span>
             <i class="fa-solid fa-arrow-right"></i>
           </button>
+
         </form>
-        
 
         <p class="switch-text">Already have an account?
           <button class="switch-link" id="goLogin">Log In</button>
@@ -94,38 +124,40 @@
           <p class="panel__sub panel__sub--dark">Sign in to continue your journey</p>
         </div>
 
-        <div class="form-group">
-          <label class="form-label form-label--dark" for="li-email">
-            <i class="fa-regular fa-envelope"></i> Email
-          </label>
-          <input class="form-input form-input--light" id="li-email" type="email" placeholder="alex@example.com" autocomplete="email" />
-          <span class="input-line input-line--dark"></span>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label form-label--dark" for="li-pass">
-            <i class="fa-solid fa-lock"></i> Password
-          </label>
-          <div class="input-wrap">
-            <input class="form-input form-input--light" id="li-pass" type="password" placeholder="••••••••" autocomplete="current-password" />
-            <button class="eye-btn eye-btn--dark" data-target="li-pass" aria-label="Toggle password"><i class="fa-regular fa-eye"></i></button>
+        <form action="../backend/login.php" method="post">
+          <div class="form-group">
+            <label class="form-label form-label--dark" for="li-email">
+              <i class="fa-regular fa-envelope"></i> Email
+            </label>
+            <input class="form-input form-input--light" id="li-email" type="email" placeholder="alex@example.com" autocomplete="email" />
+            <span class="input-line input-line--dark"></span>
           </div>
-          <span class="input-line input-line--dark"></span>
-        </div>
 
-        <div class="extras">
-          <label class="checkbox-wrap">
-            <input type="checkbox" id="remember" />
-            <span class="checkmark"></span>
-            <span class="checkbox-label">Remember me</span>
-          </label>
-          <a href="#" class="forgot-link">Forgot password?</a>
-        </div>
+          <div class="form-group">
+            <label class="form-label form-label--dark" for="li-pass">
+              <i class="fa-solid fa-lock"></i> Password
+            </label>
+            <div class="input-wrap">
+              <input class="form-input form-input--light" id="li-pass" type="password" placeholder="••••••••" autocomplete="current-password" />
+              <button class="eye-btn eye-btn--dark" data-target="li-pass" aria-label="Toggle password"><i class="fa-regular fa-eye"></i></button>
+            </div>
+            <span class="input-line input-line--dark"></span>
+          </div>
 
-        <button class="btn btn--secondary" id="loginBtn">
-          <span>Log In</span>
-          <i class="fa-solid fa-arrow-right"></i>
-        </button>
+          <div class="extras">
+            <label class="checkbox-wrap">
+              <input type="checkbox" id="remember" />
+              <span class="checkmark"></span>
+              <span class="checkbox-label">Remember me</span>
+            </label>
+            <a href="#" class="forgot-link">Forgot password?</a>
+          </div>
+
+          <button class="btn btn--secondary" id="loginBtn">
+            <span>Log In</span>
+            <i class="fa-solid fa-arrow-right"></i>
+          </button>
+        </form>
 
         <p class="switch-text switch-text--dark">Don't have an account?
           <button class="switch-link switch-link--purple" id="goSignup">Sign Up</button>

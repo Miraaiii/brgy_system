@@ -1078,8 +1078,7 @@ $services = [
     <a href="announcements.php" role="menuitem">News</a>
     <a href="contact.php" role="menuitem">Contact</a>
     <div class="mobile-cta">
-      <a href="login.php" class="btn-nav-login" style="text-align:center" role="menuitem">Log in</a>
-      <a href="register.php" class="btn-nav-register" style="text-align:center" role="menuitem">Register</a>
+      <a href="src/pages/login-register/forms.php" class="btn-nav-register" style="text-align:center" role="menuitem">Register</a>
     </div>
   </div>
 </nav>
