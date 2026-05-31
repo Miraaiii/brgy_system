@@ -1,0 +1,7 @@
+# Environment variables file containing sensitive keys
+.env
+
+# XAMPP/OS specific local configuration overrides
+.vscode/
+.idea/
+*.log

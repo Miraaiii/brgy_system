@@ -249,7 +249,7 @@ $services = [
     =========================== */
     .hero {
       min-height: 100vh;
-      background: linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.45)), url('src/assets/images/system_bg.png');
+      background: linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.45)), url('assets/images/system_bg.png');
       background-size: cover;
       background-position: center;
       background-repeat: no-repeat;
@@ -1062,7 +1062,8 @@ $services = [
     </div>
 
     <div class="nav-cta">
-      <a href="src/pages/login-register/forms.php" class="btn-nav-register"><i class="bi bi-person-plus-fill"></i> Register</a>
+      <a href="login.php" class="btn-nav-login">Log In</a>
+      <a href="register.php" class="btn-nav-register"><i class="bi bi-person-plus-fill"></i> Register</a>
     </div>
 
     <button class="nav-toggle" id="navToggle" aria-label="Toggle menu" aria-expanded="false">
@@ -1078,7 +1079,8 @@ $services = [
     <a href="announcements.php" role="menuitem">News</a>
     <a href="contact.php" role="menuitem">Contact</a>
     <div class="mobile-cta">
-      <a href="src/pages/login-register/forms.php" class="btn-nav-register" style="text-align:center" role="menuitem">Register</a>
+      <a href="login.php" class="btn-nav-login" style="text-align:center" role="menuitem">Log In</a>
+      <a href="register.php" class="btn-nav-register" style="text-align:center" role="menuitem">Register</a>
     </div>
   </div>
 </nav>
@@ -1101,7 +1103,7 @@ $services = [
           Request documents, track your applications, and access all barangay services — anywhere, anytime. Noveleta, Cavite.
         </p>
         <div class="hero-actions">
-          <a href="register.php" class="btn-hero-primary">
+          <a href="login.php" class="btn-hero-primary">
             <i class="bi bi-person-plus-fill"></i> Create Resident Account
           </a>
           <a href="services.php" class="btn-hero-secondary">
@@ -1384,7 +1386,7 @@ $services = [
       <h2 class="cta-title" id="cta-heading">Ready to Access Barangay Services Online?</h2>
       <p class="cta-sub">Create your free resident account today and experience a faster, more convenient way to get your barangay documents.</p>
       <div class="cta-buttons">
-        <a href="register.php" class="btn-cta-primary">
+        <a href="login.php" class="btn-cta-primary">
           <i class="bi bi-person-plus-fill"></i> Create Free Account
         </a>
         <a href="login.php" class="btn-cta-secondary">
@@ -1480,7 +1482,7 @@ $services = [
           <li><a href="officials.php">Officials</a></li>
           <li><a href="announcements.php">Announcements</a></li>
           <li><a href="contact.php">Contact Us</a></li>
-          <li><a href="register.php">Register</a></li>
+          <li><a href="login.php">Register</a></li>
           <li><a href="login.php">Resident Login</a></li>
         </ul>
       </div>
@@ -1512,7 +1514,7 @@ $services = [
       <span>
         <a href="privacy.php">Privacy Policy</a> &nbsp;·&nbsp;
         <a href="terms.php">Terms of Use</a> &nbsp;·&nbsp;
-        <a href="admin/login.php" style="opacity:.4">Admin</a>
+        <a href="login.php" style="opacity:.4">Admin</a>
       </span>
     </div>
   </div>
