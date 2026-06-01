@@ -7,7 +7,7 @@ if (!isset($_SESSION['user_id'])) {
 
 include 'config/connection.php';
 $user_id = $_SESSION['user_id'];
-$stmt = $conn->prepare("SELECT fullname, email, role FROM users WHERE user_id = ? LIMIT 1");
+$stmt = $conn->prepare("SELECT username, email, role FROM users WHERE id = ? LIMIT 1");
 $stmt->bind_param("i", $user_id);
 $stmt->execute();
 $stmt->bind_result($fullname, $email, $role);

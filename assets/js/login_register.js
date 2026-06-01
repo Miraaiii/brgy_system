@@ -320,6 +320,9 @@ if (loginForm) {
 
     // Google reCAPTCHA Validation
     const recaptchaResponse = grecaptcha.getResponse();
+
+    console.log("reCAPTCHA token:", recaptchaResponse);
+
     if (!recaptchaResponse) {
       showToast('Please complete the Google reCAPTCHA check.');
       shakePanel(loginPanel);
@@ -336,13 +339,23 @@ if (loginForm) {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ email, password: pass, remember, 'g-recaptcha-response': recaptchaResponse })
       });
-      const data = await res.json();
+      const text = await res.text();
+      console.log("RAW RESPONSE:", text);
+
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        showToast("Invalid server response");
+        return;
+      }
+      console.log(data);
 
       if (data.status === 'success') {
         showToast('Login successful!');
         setTimeout(() => window.location.href = 'dashboard.php', 1000);
       } else {
-        showToast(data.message);
+        showToast(data.message || 'Something went wrong');
         shakePanel(loginPanel);
         grecaptcha.reset(); // Invalidate current recaptcha token on failure
       }

@@ -2,10 +2,15 @@
 session_start();
 include 'config/connection.php';
 
+$response = [
+  "status" => "error",
+  "message" => "Unknown error"
+];
+
 // Google Client ID & reCAPTCHA Keys from Environment Variables
-define('GOOGLE_CLIENT_ID', getenv('GOOGLE_CLIENT_ID') ?: 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com');
-define('RECAPTCHA_SITE_KEY', getenv('RECAPTCHA_SITE_KEY') ?: '6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI');
-define('RECAPTCHA_SECRET_KEY', getenv('RECAPTCHA_SECRET_KEY') ?: '6LeIxAcTAAAAAGG-vFI1qg6CQ7CV9Fgr27glJ0O0');
+define('GOOGLE_CLIENT_ID', getenv('GOOGLE_CLIENT_ID') ?: '686708121323-55ipgjmpb122nnmptr2tcn35tr4ukf0b.apps.googleusercontent.com');
+define('RECAPTCHA_SITE_KEY', getenv('RECAPTCHA_SITE_KEY') ?: '6LestQctAAAAAPiLpjPpGUxwyduFzk-azuaY32TJ');
+define('RECAPTCHA_SECRET_KEY', getenv('RECAPTCHA_SECRET_KEY') ?: '6LestQctAAAAALEbXP8QcVMnr_pp5Qo9MK5YY93l');
 
 // 1. Google OAuth Callback (POST)
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['credential'])) {
@@ -80,14 +85,14 @@ if ($_SERVER["REQUEST_METHOD"] == "GET" && !isset($_SESSION['user_id']) && isset
             
             if (strtotime($row_tok['expiry']) >= time()) {
                 if (hash_equals($row_tok['hashed_validator'], hash('sha256', $validator))) {
-                    $stmt_u = $conn->prepare("SELECT user_id, email, role FROM users WHERE user_id = ? LIMIT 1");
-                    $stmt_u->bind_param("i", $row_tok['user_id']);
+                    $stmt_u = $conn->prepare("SELECT id, email, role FROM users WHERE id = ? LIMIT 1");
+                    $stmt_u->bind_param("i", $row_tok['id']);
                     $stmt_u->execute();
                     $result_u = $stmt_u->get_result();
                     
                     if ($result_u && $result_u->num_rows > 0) {
                         $user_data = $result_u->fetch_assoc();
-                        $_SESSION['user_id'] = $user_data['user_id'];
+                        $_SESSION['id'] = $user_data['id'];
                         $_SESSION['email']   = $user_data['email'];
                         $_SESSION['role']    = $user_data['role'];
                         
@@ -149,7 +154,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     }
 
     // 3. Google reCAPTCHA Validation
-    $recaptcha_response = isset($_POST['g-recaptcha-response']) ? $_POST['g-recaptcha-response'] : '';
+    $recaptcha_response = $_POST['g-recaptcha-response'] ?? '';
+
     if (empty($recaptcha_response)) {
         echo json_encode([
             "status" => "error",
@@ -158,16 +164,17 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         exit();
     }
 
-    $verify_url = 'https://www.google.com/recaptcha/api/siteverify';
+    $verify_url = "https://www.google.com/recaptcha/api/siteverify";
+
     $data = [
-        'secret'   => RECAPTCHA_SECRET_KEY,
+        'secret' => RECAPTCHA_SECRET_KEY,
         'response' => $recaptcha_response,
         'remoteip' => $_SERVER['REMOTE_ADDR']
     ];
 
     $response = false;
 
-    // Method 1: Try cURL if available (most robust, ignoring SSL verify on localhost)
+    // cURL (preferred)
     if (function_exists('curl_init')) {
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $verify_url);
@@ -175,44 +182,30 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+
         $response = curl_exec($ch);
         curl_close($ch);
     }
 
-    // Method 2: Fallback to stream context file_get_contents
+    // fallback
     if ($response === false) {
-        $options = [
-            'http' => [
-                'header'  => "Content-type: application/x-www-form-urlencoded\r\n",
-                'method'  => 'POST',
-                'content' => http_build_query($data),
-                'timeout' => 10
-            ],
-            'ssl' => [
-                'verify_peer' => false,
-                'verify_peer_name' => false
-            ]
-        ];
-        $context  = stream_context_create($options);
-        $response = @file_get_contents($verify_url, false, $context);
+        $response = file_get_contents($verify_url . "?" . http_build_query($data));
     }
 
-    $response_keys = json_decode($response, true);
+    $result = json_decode($response, true);
 
-    if (!$response_keys || !isset($response_keys["success"]) || !$response_keys["success"]) {
+    if (!$result || empty($result['success'])) {
         echo json_encode([
             "status" => "error",
-            "message" => "Google reCAPTCHA verification failed. Please try again."
+            "message" => "reCAPTCHA verification failed"
         ]);
         exit();
     }
 
     $email    = isset($_POST['email']) ? trim($_POST['email']) : '';
-    $password = isset($_POST['password']) ? trim($_POST['password']) : '';
+    $inputPassword = isset($_POST['password']) ? trim($_POST['password']) : '';
 
-    if (empty($email) || empty($password)) {
+    if (empty($email) || empty($inputPassword)) {
         echo json_encode([
             "status" => "error",
             "message" => "All fields are required."
@@ -221,7 +214,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     }
 
     $stmt = $conn->prepare("
-        SELECT user_id, email, password, role
+        SELECT id, email, password_hash, role
         FROM users
         WHERE email = ?
         LIMIT 1
@@ -232,10 +225,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $stmt->store_result();
 
     if ($stmt->num_rows > 0) {
-        $stmt->bind_result($user_id, $db_email, $password, $role);
+        $stmt->bind_result($user_id, $db_email, $hashedPassword, $role);
         $stmt->fetch();
 
-        if (password_verify($password, $password)) {
+        if (password_verify($inputPassword, $hashedPassword)) {
             // Reset attempts on successful authentication
             $_SESSION['login_attempts'] = 0;
             $_SESSION['login_lockout_time'] = null;
@@ -415,7 +408,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
               <!-- Google reCAPTCHA Container -->
               <div class="form-group col-span-2 recaptcha-holder">
-                <div class="g-recaptcha" data-sitekey="<?= RECAPTCHA_SITE_KEY ?>"></div>
+                <div class="g-recaptcha" data-sitekey="6LestQctAAAAAPiLpjPpGUxwyduFzk-azuaY32TJ"></div>
               </div>
             </div>
 
