@@ -1,7 +1,6 @@
 <?php
-require_once '../includes/auth_check.php';
 
-requireRole(['Captain']);
+/* requireRole(['Resident']); */
 ?>
 
 <!DOCTYPE html>
