@@ -353,7 +353,36 @@ if (loginForm) {
 
       if (data.status === 'success') {
         showToast('Login successful!');
-        setTimeout(() => window.location.href = 'dashboard.php', 1000);
+
+        setTimeout(() => {
+
+          switch (data.role) {
+
+            case 'Resident':
+              window.location.href = 'portal/dashboard.php';
+              break;
+
+            case 'Captain':
+              window.location.href = 'dashboard.php';
+              break;
+
+            case 'Secretary':
+              window.location.href = 'admin/secretary/dashboard.php';
+              break;
+
+            case 'Treasurer':
+              window.location.href = 'admin/treasurer/dashboard.php';
+              break;
+
+            case 'Admin':
+              window.location.href = 'admin/dashboard.php';
+              break;
+
+            default:
+              window.location.href = 'dashboard.php';
+          }
+
+        }, 1000);
       } else {
         showToast(data.message || 'Something went wrong');
         shakePanel(loginPanel);
