@@ -1,38 +1,41 @@
 <?php
-session_start();
-if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php");
-    exit();
-}
+  include 'config/connection.php';
+  include 'includes/auth_check.php';
 
-include 'config/connection.php';
-$user_id = $_SESSION['user_id'];
-$stmt = $conn->prepare("SELECT username, email, role FROM users WHERE id = ? LIMIT 1");
-$stmt->bind_param("i", $user_id);
-$stmt->execute();
-$stmt->bind_result($fullname, $email, $role);
-$stmt->fetch();
-$stmt->close();
+  requireRole(['captain']);
 
-// Fallback in case query fails
-if (empty($fullname)) {
-    $fullname = "Juan Reyes";
-    $role = "Captain";
-    $email = "captain@bgystaros1.gov.ph";
-}
+  if (!isset($_SESSION['user_id'])) {
+      header("Location: login.php");
+      exit();
+  }
 
-// Calculate initials
-$initials = "";
-$names = explode(" ", $fullname);
-foreach ($names as $n) {
-    if (!empty($n)) {
-        $initials .= strtoupper($n[0]);
-    }
-}
-$initials = substr($initials, 0, 2);
-if (empty($initials)) {
-    $initials = "JR";
-}
+  $user_id = $_SESSION['user_id'];
+  $stmt = $conn->prepare("SELECT username, email, role FROM users WHERE id = ? LIMIT 1");
+  $stmt->bind_param("i", $user_id);
+  $stmt->execute();
+  $stmt->bind_result($fullname, $email, $role);
+  $stmt->fetch();
+  $stmt->close();
+
+  // Fallback in case query fails
+  if (empty($fullname)) {
+      $fullname = "Juan Reyes";
+      $role = "Captain";
+      $email = "captain@bgystaros1.gov.ph";
+  }
+
+  // Calculate initials
+  $initials = "";
+  $names = explode(" ", $fullname);
+  foreach ($names as $n) {
+      if (!empty($n)) {
+          $initials .= strtoupper($n[0]);
+      }
+  }
+  $initials = substr($initials, 0, 2);
+  if (empty($initials)) {
+      $initials = "JR";
+  }
 ?>
 <!DOCTYPE html>
 <html lang="en">

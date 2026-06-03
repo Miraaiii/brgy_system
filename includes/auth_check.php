@@ -24,7 +24,7 @@ function requireRole(array $allowedRoles) {
         !isset($_SESSION['role']) ||
         !in_array($_SESSION['role'], $allowedRoles)
     ) {
-        header("Location: ../includes/logout.php");
+        header("Location: /brgy_system/includes/logout.php");
         exit();
     }
 }

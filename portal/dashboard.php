@@ -1,6 +1,8 @@
 <?php
+  include '../config/connection.php';
+  include '../includes/auth_check.php';
 
-/* requireRole(['Resident']); */
+  requireRole(['Resident']);
 ?>
 
 <!DOCTYPE html>
@@ -8,7 +10,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Barangay Sta. Rosa 1 — Resident Self-Service Portal</title>
+<title>Barangay Sta. Rosa 1 — Resident's Portal</title>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-icons/1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&display=swap" rel="stylesheet">
@@ -67,7 +69,9 @@ body {
   align-items: center;
   gap: 10px;
   text-decoration: none;
-  flex-shrink: 0;
+  flex: 1;
+  min-width: 0;
+  max-width: 240px;
 }
 
 .brand-seal {
@@ -88,9 +92,16 @@ body {
   display: flex;
   flex-direction: column;
   line-height: 1.1;
+  min-width: 0;
 }
 
-.brand-name {
+.brand-name,
+.brand-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* .brand-name {
   font-family: 'Fraunces', serif;
   font-size: 15px;
   font-weight: 600;
@@ -104,7 +115,7 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   white-space: nowrap;
-}
+} */
 
 .topbar-spacer { flex: 1; }
 
@@ -146,7 +157,7 @@ body {
 .topbar-search input::placeholder { color: rgba(255,255,255,0.5); }
 .topbar-search i { color: rgba(255,255,255,0.5); font-size: 14px; }
 
-.topbar-actions { display: flex; align-items: center; gap: 6px; }
+.topbar-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 
 .topbar-btn {
   position: relative;
@@ -405,6 +416,54 @@ body {
   font-size: 13.5px;
   color: var(--text-muted);
   margin-top: 4px;
+}
+
+.avatar-dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.avatar-img {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  cursor: pointer;
+  border: 2px solid rgba(255,255,255,0.25);
+  flex-shrink: 0;
+  display: block;
+}
+
+.avatar-img:hover {
+  border-color: #999;
+}
+
+.dropdown-menu {
+  display: none;
+  position: absolute;
+  top: 50px;
+  right: 0;
+  min-width: 160px;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(0,0,0,.15);
+  overflow: hidden;
+  z-index: 1000;
+}
+
+.dropdown-menu.show {
+  display: block;
+}
+
+.dropdown-menu a {
+  display: block;
+  padding: 12px 16px;
+  text-decoration: none;
+  color: #333;
+}
+
+.dropdown-menu a:hover {
+  background: #f5f5f5;
 }
 
 /* ── WELCOME CARD ── */
@@ -1109,11 +1168,11 @@ textarea.form-control { resize: vertical; min-height: 100px; }
 @media (max-width: 991px) {
   .hamburger-btn { display: flex; }
   .topbar-search { display: none; }
-  .sidebar { transform: translateX(-100%); }
+  .sidebar { transform: translateX(-100%); left: 0; margin-left: 0; z-index: 900; }
   .sidebar.open { transform: translateX(0); }
-  .main-content { margin-left: 0; }
+  .main-content { margin-left: 0 !important; width: 100%; max-width: 100vw; overflow-x: hidden; }
   .bottom-nav { display: block; }
-  .page-content { padding: 20px 16px 90px; }
+  .page-content { padding: 20px 16px 90px !important; width: 100%; max-width: 100%; overflow-x: hidden; }
   .three-col-dash { grid-template-columns: 1fr; }
   .two-col { grid-template-columns: 1fr; }
   .welcome-card { padding: 22px 20px; }
@@ -1126,6 +1185,16 @@ textarea.form-control { resize: vertical; min-height: 100px; }
   .page-title { font-size: 20px; }
   .brand-sub { display: none; }
   .topbar-btn:not(:last-of-type):not(.has-badge) { display: none; }
+  thead th:nth-child(3),
+  tbody td:nth-child(3) { display: none; }
+  thead th:nth-child(6), 
+  tbody td:nth-child(6) { display: none; }
+  tbody td { padding: 10px 10px; font-size: 12px; }
+  thead th { font-size: 10px; padding: 8px 10px; }
+  .page-view#page-my-cases thead th:nth-child(3),
+  .page-view#page-my-cases tbody td:nth-child(3),
+  .page-view#page-my-cases thead th:nth-child(6),
+  .page-view#page-my-cases tbody td:nth-child(6) { display: none; }
 }
 
 @media (max-width: 480px) {
@@ -1135,6 +1204,22 @@ textarea.form-control { resize: vertical; min-height: 100px; }
   .welcome-actions .btn-accent,
   .welcome-actions .btn-outline-white { width: 100%; justify-content: center; }
   .topbar { padding: 0 12px; gap: 8px; }
+  thead th:nth-child(3),
+  tbody td:nth-child(3),
+  thead th:nth-child(4),
+  tbody td:nth-child(4) { display: none; }
+  .status-badge { font-size: 10px; padding: 3px 7px; }
+  .complaint-item { flex-wrap: wrap; gap: 8px; }
+  .complaint-num { font-size: 10px; }
+  .complaint-title { font-size: 12px; }
+}
+
+@media (max-width: 400px) {
+  .brand-sub { display: none; }
+  .brand-name { display: none; }
+  .topbar-search { display: none; }
+  .topbar { padding: 0 10px; gap: 8px; }
+  .topbar-spacer { display: none; }
 }
 
 @media (max-width: 360px) {
@@ -1192,7 +1277,26 @@ textarea.form-control { resize: vertical; min-height: 100px; }
     <button class="topbar-btn" onclick="showPage('contact')" aria-label="Help">
       <i class="bi bi-question-circle"></i>
     </button>
-    <button class="avatar-btn" onclick="showPage('profile')" aria-label="My Account">JD</button>
+    
+    <?php
+      $profilePic = !empty($_SESSION['profile_pic'])
+      ? $_SESSION['profile_pic']
+      : '/brgy_system/assets/images/default_profile.png';
+    ?>
+
+    <div class="avatar-dropdown">
+        <img
+          src="<?= htmlspecialchars($profilePic) ?>"
+          alt="Profile Picture"
+          class="avatar-img"
+          onclick="toggleMenu()"
+        >
+
+        <div class="dropdown-menu" id="avatarMenu">
+          <a href="#" onclick="showPage('profile')">My Profile</a>
+          <a href="/brgy_system/includes/logout.php">Logout</a>
+        </div>
+    </div>
   </div>
 </nav>
 
@@ -2153,6 +2257,18 @@ function toggleSubmenu(id, el) {
   const isOpen = sub.classList.toggle('open');
   el.classList.toggle('expanded', isOpen);
 }
+
+function toggleMenu() {
+    document.getElementById('avatarMenu').classList.toggle('show');
+}
+
+window.addEventListener('click', function(e) {
+    const dropdown = document.querySelector('.avatar-dropdown');
+
+    if (!dropdown.contains(e.target)) {
+        document.getElementById('avatarMenu').classList.remove('show');
+    }
+});
 
 // ── NOTIFICATIONS ──
 function toggleNotif() {
