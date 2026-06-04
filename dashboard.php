@@ -174,7 +174,7 @@
           <a href="#" class="dropdown-item-custom"><i class="fa-solid fa-lock"></i> Change Password</a>
           <a href="#" class="dropdown-item-custom"><i class="fa-solid fa-bell"></i> Notification Settings</a>
           <div class="dropdown-divider"></div>
-          <a href="#" class="dropdown-item-custom text-danger" id="dropdownLogoutBtn"><i class="fa-solid fa-right-from-bracket"></i> Sign Out</a>
+          <a href="includes/logout.php" class="dropdown-item-custom text-danger"><i class="fa-solid fa-right-from-bracket"></i> Sign Out</a>
         </div>
       </div>
     </div>

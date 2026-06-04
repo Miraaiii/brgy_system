@@ -808,7 +808,7 @@ function initInteractiveActions() {
     triggerToast("Logging out. Good day!", false);
     logAudit("Administrative session closed.");
     setTimeout(() => {
-      window.location.href = "../logout.php";
+      window.location.href = "/brgy_system/includes/logout.php";
     }, 1200);
   };
 
