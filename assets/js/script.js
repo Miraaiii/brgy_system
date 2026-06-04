@@ -808,8 +808,7 @@ function initInteractiveActions() {
     triggerToast("Logging out. Good day!", false);
     logAudit("Administrative session closed.");
     setTimeout(() => {
-      // Clear sessions or direct to login page
-      window.location.href = "login.php";
+      window.location.href = "../logout.php";
     }, 1200);
   };
 

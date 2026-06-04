@@ -23,6 +23,10 @@ const goForgotBtn   = document.getElementById('goForgot');
 const backToLogin   = document.getElementById('backToLogin');
 
 const signupBtn     = document.getElementById('signupBtn');
+const signupForm    = document.getElementById('signupForm');
+const signupNextBtn = document.getElementById('signupNextBtn');
+const signupBackBtn = document.getElementById('signupBackBtn');
+const signupStepError = document.getElementById('signupStepError');
 const loginBtn      = document.getElementById('loginBtn');
 const forgotBtn     = document.getElementById('forgotBtn');
 // Canvas element references removed for static municipal aesthetic
@@ -40,19 +44,21 @@ function setHeight(panel) {
 
 function showSignup() {
   if (!cardWrapper || !signupPanel) return;
-  cardWrapper.className = 'card-wrapper';
+  cardWrapper.classList.remove('show-login', 'show-forgot');
   setHeight(signupPanel);
 }
 
 function showLogin() {
   if (!cardWrapper || !loginPanel) return;
-  cardWrapper.className = 'card-wrapper show-login';
+  cardWrapper.classList.remove('show-forgot');
+  cardWrapper.classList.add('show-login');
   setHeight(loginPanel);
 }
 
 function showForgot() {
   if (!cardWrapper || !forgotPanel) return;
-  cardWrapper.className = 'card-wrapper show-forgot';
+  cardWrapper.classList.remove('show-login');
+  cardWrapper.classList.add('show-forgot');
   setHeight(forgotPanel);
 }
 
@@ -69,17 +75,46 @@ window.addEventListener('DOMContentLoaded', () => {
 
 if (goLoginBtn)  goLoginBtn.addEventListener('click', showLogin);
 if (goSignupBtn) goSignupBtn.addEventListener('click', showSignup);
-if (goForgotBtn) goForgotBtn.addEventListener('click', showForgot);
-if (backToLogin) backToLogin.addEventListener('click', showLogin);
+if (goForgotBtn) goForgotBtn.addEventListener('click', () => {
+  const step1 = document.getElementById('fpStep1');
+  const step2 = document.getElementById('fpStep2');
+  const step3 = document.getElementById('fpStep3');
+  if (step1 && step2 && step3) {
+    step1.style.display = 'block';
+    step2.style.display = 'none';
+    step3.style.display = 'none';
+  }
+  showForgot();
+});
+if (backToLogin) backToLogin.addEventListener('click', () => {
+  const step1 = document.getElementById('fpStep1');
+  const step2 = document.getElementById('fpStep2');
+  const step3 = document.getElementById('fpStep3');
+  if (step1 && step2 && step3) {
+    step1.style.display = 'block';
+    step2.style.display = 'none';
+    step3.style.display = 'none';
+  }
+  showLogin();
+});
 
 // ── Live Password Requirements Checklist ──
 const suPass = document.getElementById('su-pass');
 const suConfirmPass = document.getElementById('su-confirm-pass');
 const reqLength = document.getElementById('req-length');
 const reqUpper = document.getElementById('req-upper');
-const reqLower = document.getElementById('req-lower');
-const reqSymbol = document.getElementById('req-symbol');
+const reqNumber = document.getElementById('req-number');
 const reqMatch = document.getElementById('req-match');
+
+function setRequirementState(item, isValid) {
+  if (!item) return;
+
+  item.className = `requirement ${isValid ? 'valid' : 'invalid'}`;
+  const icon = item.querySelector('i');
+  if (icon) {
+    icon.className = `fa-solid ${isValid ? 'fa-circle-check' : 'fa-circle-xmark'}`;
+  }
+}
 
 function validatePasswordRequirements() {
   if (!suPass || !suConfirmPass) return;
@@ -87,50 +122,10 @@ function validatePasswordRequirements() {
   const val = suPass.value;
   const confirmVal = suConfirmPass.value;
 
-  // 1. Length Check (>= 8)
-  if (val.length >= 8) {
-    reqLength.className = 'requirement valid';
-    reqLength.querySelector('i').className = 'fa-solid fa-circle-check';
-  } else {
-    reqLength.className = 'requirement invalid';
-    reqLength.querySelector('i').className = 'fa-solid fa-circle-xmark';
-  }
-
-  // 2. Uppercase Check (A-Z)
-  if (/[A-Z]/.test(val)) {
-    reqUpper.className = 'requirement valid';
-    reqUpper.querySelector('i').className = 'fa-solid fa-circle-check';
-  } else {
-    reqUpper.className = 'requirement invalid';
-    reqUpper.querySelector('i').className = 'fa-solid fa-circle-xmark';
-  }
-
-  // 3. Lowercase Check (a-z)
-  if (/[a-z]/.test(val)) {
-    reqLower.className = 'requirement valid';
-    reqLower.querySelector('i').className = 'fa-solid fa-circle-check';
-  } else {
-    reqLower.className = 'requirement invalid';
-    reqLower.querySelector('i').className = 'fa-solid fa-circle-xmark';
-  }
-
-  // 4. Number or Symbol Check (0-9 or special character)
-  if (/[0-9]/.test(val) || /[^A-Za-z0-9]/.test(val)) {
-    reqSymbol.className = 'requirement valid';
-    reqSymbol.querySelector('i').className = 'fa-solid fa-circle-check';
-  } else {
-    reqSymbol.className = 'requirement invalid';
-    reqSymbol.querySelector('i').className = 'fa-solid fa-circle-xmark';
-  }
-
-  // 5. Match Check
-  if (val === confirmVal && val.length > 0) {
-    reqMatch.className = 'requirement valid';
-    reqMatch.querySelector('i').className = 'fa-solid fa-circle-check';
-  } else {
-    reqMatch.className = 'requirement invalid';
-    reqMatch.querySelector('i').className = 'fa-solid fa-circle-xmark';
-  }
+  setRequirementState(reqLength, val.length >= 8);
+  setRequirementState(reqUpper, /[A-Z]/.test(val));
+  setRequirementState(reqNumber, /[0-9]/.test(val));
+  setRequirementState(reqMatch, val === confirmVal && val.length > 0);
 
   // Adaptive panel height adjustment
   if (signupPanel) {
@@ -168,6 +163,8 @@ function showToast(message) {
 
   const toast = document.createElement('div');
   toast.className = 'toast';
+  toast.setAttribute('role', 'status');
+  toast.setAttribute('aria-live', 'polite');
   toast.textContent = message;
   document.body.appendChild(toast);
 
@@ -186,8 +183,103 @@ function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+function getCsrfToken(form) {
+  const field = form ? form.querySelector('[name="csrf_token"]') : null;
+  if (field && field.value) return field.value;
+  return typeof AUTH_CSRF_TOKEN !== 'undefined' ? AUTH_CSRF_TOKEN : '';
+}
+
+function resolveField(fieldName, form) {
+  if (!fieldName) return null;
+  if (form) {
+    const named = form.querySelector(`[name="${fieldName}"]`);
+    if (named) return named;
+  }
+
+  const fieldMap = {
+    email: ['su-email', 'li-email', 'fp-email'],
+    password: ['su-pass', 'li-pass', 'fp-new-pass'],
+    confirm_password: ['su-confirm-pass', 'fp-confirm-pass'],
+    mobile_number: ['su-contact'],
+    birth_date: ['su-birth-date'],
+    sex: ['su-sex'],
+    civil_status: ['su-civil-status'],
+    street_name: ['su-street-name'],
+    valid_id: ['su-valid-id'],
+    agree_terms: ['su-terms'],
+    code: ['fp-code']
+  };
+
+  const ids = fieldMap[fieldName] || [fieldName];
+  for (const id of ids) {
+    const field = document.getElementById(id);
+    if (field) return field;
+  }
+  return null;
+}
+
+function fieldErrorContainer(field) {
+  if (!field) return null;
+  return field.closest('.form-group') || field.closest('.terms-box') || field.parentElement;
+}
+
+function clearFieldError(field) {
+  const container = fieldErrorContainer(field);
+  if (!container) return;
+  const error = container.querySelector('.field-error');
+  if (error) error.remove();
+  field.classList.remove('is-invalid');
+  field.removeAttribute('aria-invalid');
+  const describedBy = (field.getAttribute('aria-describedby') || '')
+    .split(/\s+/)
+    .filter(id => id && !id.endsWith('-error'))
+    .join(' ');
+  if (describedBy) field.setAttribute('aria-describedby', describedBy);
+  else field.removeAttribute('aria-describedby');
+}
+
+function setFieldError(field, message) {
+  if (!field) return;
+  const container = fieldErrorContainer(field);
+  if (!container) return;
+
+  clearFieldError(field);
+  const errorId = `${field.id || field.name}-error`;
+  const error = document.createElement('p');
+  error.className = 'field-error';
+  error.id = errorId;
+  error.textContent = message;
+  container.appendChild(error);
+
+  field.classList.add('is-invalid');
+  field.setAttribute('aria-invalid', 'true');
+  const existing = field.getAttribute('aria-describedby') || '';
+  field.setAttribute('aria-describedby', `${existing} ${errorId}`.trim());
+}
+
+function clearPanelFieldErrors(container) {
+  if (!container) return;
+  container.querySelectorAll('.is-invalid').forEach(field => clearFieldError(field));
+}
+
+function showFormIssue(panel, message, field) {
+  if (field) setFieldError(field, message);
+  showToast(message);
+  shakePanel(panel);
+  if (field && typeof field.focus === 'function' && field.type !== 'hidden') field.focus();
+}
+
+document.addEventListener('input', (event) => {
+  if (event.target.matches('.form-input')) clearFieldError(event.target);
+});
+
+document.addEventListener('change', (event) => {
+  if (event.target.matches('.form-input, input[type="checkbox"]')) clearFieldError(event.target);
+});
+
 /* Shake panel on error */
 function shakePanel(panel) {
+  if (!panel) return;
   panel.style.animation = 'none';
   panel.offsetHeight;
   panel.style.animation = 'shake 0.4s ease';
@@ -212,88 +304,237 @@ document.head.appendChild(shakeStyle);
 /* ══════════════════════════════════════
    5. SIGNUP SUBMISSION
    ══════════════════════════════════════ */
-if (signupBtn) {
-  signupBtn.addEventListener('click', async (e) => {
+let signupCurrentStep = 1;
+const signupSteps = Array.from(document.querySelectorAll('[data-step-panel]'));
+const signupProgressSteps = Array.from(document.querySelectorAll('[data-register-step]'));
+const suBirthDate = document.getElementById('su-birth-date');
+const suAge = document.getElementById('su-age');
+const suContact = document.getElementById('su-contact');
+const suValidId = document.getElementById('su-valid-id');
+const suValidIdMeta = document.getElementById('su-valid-id-meta');
+const suTerms = document.getElementById('su-terms');
+
+function signupField(id) {
+  return document.getElementById(id);
+}
+
+function setSignupStepError(message) {
+  if (!signupStepError) return;
+  signupStepError.textContent = message;
+  signupStepError.hidden = !message;
+}
+
+function showSignupStepError(message, field) {
+  setSignupStepError(message);
+  showFormIssue(signupPanel, message, field);
+}
+
+function clearSignupStepError() {
+  setSignupStepError('');
+  clearPanelFieldErrors(signupForm);
+}
+
+function calculateAge(value) {
+  if (!value) return null;
+  const birthDate = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(birthDate.getTime())) return null;
+
+  const today = new Date();
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const monthDiff = today.getMonth() - birthDate.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+    age--;
+  }
+  return age;
+}
+
+function updateAgeDisplay() {
+  if (!suBirthDate || !suAge) return;
+  const age = calculateAge(suBirthDate.value);
+  suAge.value = age === null ? 'Auto-calculated' : `${age} years old`;
+}
+
+function formatFileSize(bytes) {
+  if (!Number.isFinite(bytes)) return '';
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} bytes`;
+}
+
+function updateValidIdMeta() {
+  if (!suValidId || !suValidIdMeta) return;
+  const file = suValidId.files && suValidId.files[0] ? suValidId.files[0] : null;
+  suValidIdMeta.textContent = file ? `${file.name} (${formatFileSize(file.size)})` : 'No file selected.';
+}
+
+function switchSignupStep(step, keepError = false) {
+  if (!signupSteps.length) return;
+
+  signupCurrentStep = Math.max(1, Math.min(3, step));
+  signupSteps.forEach(panel => {
+    panel.classList.toggle('is-active', Number(panel.dataset.stepPanel) === signupCurrentStep);
+  });
+  signupProgressSteps.forEach(item => {
+    const itemStep = Number(item.dataset.registerStep);
+    item.classList.toggle('is-active', itemStep === signupCurrentStep);
+    item.classList.toggle('is-complete', itemStep < signupCurrentStep);
+    if (itemStep === signupCurrentStep) {
+      item.setAttribute('aria-current', 'step');
+    } else {
+      item.removeAttribute('aria-current');
+    }
+  });
+
+  if (signupBackBtn) signupBackBtn.hidden = signupCurrentStep === 1;
+  if (signupNextBtn) signupNextBtn.hidden = signupCurrentStep === 3;
+  if (signupBtn) signupBtn.hidden = signupCurrentStep !== 3;
+  if (!keepError) clearSignupStepError();
+  if (signupPanel) setHeight(signupPanel);
+}
+
+function validateSignupStep(step) {
+  if (!signupForm) return true;
+
+  if (step === 1) {
+    const firstName = signupField('su-first-name');
+    const lastName = signupField('su-last-name');
+    const email = signupField('su-email');
+    const mobile = signupField('su-contact');
+    const pass = signupField('su-pass');
+    const confirmPass = signupField('su-confirm-pass');
+
+    if (!firstName.value.trim()) return showSignupStepError('First name is required.', firstName), false;
+    if (!lastName.value.trim()) return showSignupStepError('Last name is required.', lastName), false;
+    if (!email.value.trim() || !isValidEmail(email.value.trim())) return showSignupStepError('Please enter a valid email address.', email), false;
+    if (!/^09\d{9}$/.test(mobile.value.trim())) return showSignupStepError('Mobile number must be 11 digits and start with 09.', mobile), false;
+    if (pass.value.length < 8) return showSignupStepError('Password must be at least 8 characters.', pass), false;
+    if (!/[A-Z]/.test(pass.value)) return showSignupStepError('Password must contain at least one uppercase letter.', pass), false;
+    if (!/[0-9]/.test(pass.value)) return showSignupStepError('Password must contain at least one number.', pass), false;
+    if (pass.value !== confirmPass.value) return showSignupStepError('Passwords do not match.', confirmPass), false;
+  }
+
+  if (step === 2) {
+    const birthDate = signupField('su-birth-date');
+    const birthPlace = signupField('su-birth-place');
+    const sex = signupField('su-sex');
+    const civilStatus = signupField('su-civil-status');
+    const nationality = signupField('su-nationality');
+    const age = calculateAge(birthDate.value);
+
+    if (!birthDate.value || age === null) return showSignupStepError('Date of birth is required.', birthDate), false;
+    if (age < 18) return showSignupStepError('You must be at least 18 years old to register.', birthDate), false;
+    if (!birthPlace.value.trim()) return showSignupStepError('Place of birth is required.', birthPlace), false;
+    if (!sex.value) return showSignupStepError('Sex is required.', sex), false;
+    if (!civilStatus.value) return showSignupStepError('Civil status is required.', civilStatus), false;
+    if (!nationality.value.trim()) return showSignupStepError('Nationality is required.', nationality), false;
+  }
+
+  if (step === 3) {
+    const streetName = signupField('su-street-name');
+    const file = suValidId && suValidId.files ? suValidId.files[0] : null;
+    const allowedTypes = ['image/jpeg', 'image/png', 'application/pdf'];
+    const allowedName = /\.(jpe?g|png|pdf)$/i;
+
+    if (!streetName.value.trim()) return showSignupStepError('Street name is required.', streetName), false;
+    if (!file) return showSignupStepError('Please upload a valid government-issued ID.', suValidId), false;
+    if (file.size > 5 * 1024 * 1024) return showSignupStepError('Valid ID must not exceed 5MB.', suValidId), false;
+    if (!allowedTypes.includes(file.type) && !allowedName.test(file.name)) {
+      return showSignupStepError('Valid ID must be a JPG, PNG, or PDF file.', suValidId), false;
+    }
+    if (!suTerms || !suTerms.checked) return showSignupStepError('You must agree to the terms before registering.', suTerms), false;
+  }
+
+  clearSignupStepError();
+  return true;
+}
+
+if (suContact) {
+  suContact.addEventListener('input', () => {
+    suContact.value = suContact.value.replace(/\D/g, '').slice(0, 11);
+  });
+}
+
+if (suBirthDate) {
+  suBirthDate.addEventListener('input', updateAgeDisplay);
+}
+
+if (suValidId) {
+  suValidId.addEventListener('change', updateValidIdMeta);
+}
+
+if (signupNextBtn) {
+  signupNextBtn.addEventListener('click', () => {
+    if (validateSignupStep(signupCurrentStep)) {
+      switchSignupStep(signupCurrentStep + 1);
+    }
+  });
+}
+
+if (signupBackBtn) {
+  signupBackBtn.addEventListener('click', () => switchSignupStep(signupCurrentStep - 1));
+}
+
+signupProgressSteps.forEach(item => {
+  item.addEventListener('click', () => {
+    const targetStep = Number(item.dataset.registerStep);
+    if (targetStep < signupCurrentStep) {
+      switchSignupStep(targetStep);
+      return;
+    }
+
+    for (let step = signupCurrentStep; step < targetStep; step++) {
+      if (!validateSignupStep(step)) return;
+    }
+    switchSignupStep(targetStep);
+  });
+});
+
+if (signupForm && signupBtn) {
+  signupForm.addEventListener('submit', async (e) => {
     e.preventDefault();
 
-    const name        = document.getElementById('su-name').value.trim();
-    const email       = document.getElementById('su-email').value.trim();
-    const contact     = document.getElementById('su-contact').value.trim();
-    const pass        = document.getElementById('su-pass').value;
-    const confirmPass = document.getElementById('su-confirm-pass').value;
-
-    if (!name || !email || !contact || !pass || !confirmPass) {
-      showToast('Please fill in all fields.');
-      shakePanel(signupPanel);
-      return;
-    }
-    if (!isValidEmail(email)) {
-      showToast('Invalid email address.');
-      shakePanel(signupPanel);
-      return;
-    }
-    if (!/^(09)\d{9}$/.test(contact)) {
-      showToast('Contact must be 11 digits (e.g. 09123456789).');
-      shakePanel(signupPanel);
-      return;
-    }
-    if (pass.length < 8) {
-      showToast('Password must be at least 8 characters.');
-      shakePanel(signupPanel);
-      return;
-    }
-    if (!/[A-Z]/.test(pass)) {
-      showToast('Password must contain at least one uppercase letter.');
-      shakePanel(signupPanel);
-      return;
-    }
-    if (!/[a-z]/.test(pass)) {
-      showToast('Password must contain at least one lowercase letter.');
-      shakePanel(signupPanel);
-      return;
-    }
-    if (!/[0-9]/.test(pass) && !/[^A-Za-z0-9]/.test(pass)) {
-      showToast('Password must contain at least one number or symbol.');
-      shakePanel(signupPanel);
-      return;
-    }
-    if (pass !== confirmPass) {
-      showToast('Passwords do not match.');
-      shakePanel(signupPanel);
-      return;
+    for (let step = 1; step <= 3; step++) {
+      if (!validateSignupStep(step)) {
+        switchSignupStep(step, true);
+        return;
+      }
     }
 
     try {
       signupBtn.disabled = true;
-      signupBtn.innerHTML = '<span>Creating...</span>';
+      if (signupNextBtn) signupNextBtn.disabled = true;
+      if (signupBackBtn) signupBackBtn.disabled = true;
+      signupBtn.innerHTML = '<span>Submitting...</span>';
 
-      const res  = await fetch('register.php', {
+      const res = await fetch('register.php', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ fullname: name, email, contact, password: pass, confirm_password: confirmPass })
+        body: new FormData(signupForm)
       });
       const data = await res.json();
 
       if (data.status === 'success') {
-        showToast('Account created successfully!');
-        document.getElementById('su-name').value          = '';
-        document.getElementById('su-email').value         = '';
-        document.getElementById('su-contact').value       = '';
-        document.getElementById('su-pass').value          = '';
-        document.getElementById('su-confirm-pass').value  = '';
-        validatePasswordRequirements(); // Reset requirement ticks visually
-        setTimeout(showLogin, 1200);
+        showToast(data.message || 'Registration submitted successfully.');
+        signupForm.reset();
+        validatePasswordRequirements();
+        updateAgeDisplay();
+        updateValidIdMeta();
+        switchSignupStep(1);
+        setTimeout(() => window.location.href = data.redirect || 'account_status.php', 1000);
       } else {
-        showToast(data.message);
-        shakePanel(signupPanel);
+        showSignupStepError(data.message || 'Failed to submit registration.', resolveField(data.field, signupForm));
       }
     } catch {
-      showToast('Server error. Please try again.');
+      showSignupStepError('Server error. Please try again.');
     } finally {
       signupBtn.disabled = false;
-      signupBtn.innerHTML = '<span>Sign Up</span><i class="fa-solid fa-arrow-right"></i>';
+      if (signupNextBtn) signupNextBtn.disabled = false;
+      if (signupBackBtn) signupBackBtn.disabled = false;
+      signupBtn.innerHTML = '<span>Submit Registration</span><i class="fa-solid fa-paper-plane"></i>';
     }
   });
+
+  switchSignupStep(1);
+  updateAgeDisplay();
 }
 
 /* ══════════════════════════════════════
@@ -306,15 +547,14 @@ if (loginForm) {
 
     const email   = document.getElementById('li-email').value.trim();
     const pass    = document.getElementById('li-pass').value;
+    clearPanelFieldErrors(loginForm);
 
     if (!email || !pass) {
-      showToast('Please fill in all fields.');
-      shakePanel(loginPanel);
+      showFormIssue(loginPanel, 'Please fill in all fields.', !email ? document.getElementById('li-email') : document.getElementById('li-pass'));
       return;
     }
     if (!isValidEmail(email)) {
-      showToast('Invalid email address.');
-      shakePanel(loginPanel);
+      showFormIssue(loginPanel, 'Invalid email address.', document.getElementById('li-email'));
       return;
     }
 
@@ -337,7 +577,7 @@ if (loginForm) {
       const res  = await fetch('login.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ email, password: pass, remember, 'g-recaptcha-response': recaptchaResponse })
+        body: new URLSearchParams({ csrf_token: getCsrfToken(loginForm), email, password: pass, remember, 'g-recaptcha-response': recaptchaResponse })
       });
       const text = await res.text();
       console.log("RAW RESPONSE:", text);
@@ -353,39 +593,12 @@ if (loginForm) {
 
       if (data.status === 'success') {
         showToast('Login successful!');
-
-        setTimeout(() => {
-
-          switch (data.role) {
-
-            case 'Resident':
-              window.location.href = 'portal/dashboard.php';
-              break;
-
-            case 'Captain':
-              window.location.href = 'dashboard.php';
-              break;
-
-            case 'Secretary':
-              window.location.href = 'admin/secretary/dashboard.php';
-              break;
-
-            case 'Treasurer':
-              window.location.href = 'admin/treasurer/dashboard.php';
-              break;
-
-            case 'Admin':
-              window.location.href = 'admin/dashboard.php';
-              break;
-
-            default:
-              window.location.href = 'dashboard.php';
-          }
-
-        }, 1000);
+        setTimeout(() => window.location.href = data.redirect || 'portal/dashboard.php', 1000);
+      } else if ((data.status === 'pending' || data.status === 'suspended') && data.redirect) {
+        showToast(data.message);
+        setTimeout(() => window.location.href = data.redirect, 700);
       } else {
-        showToast(data.message || 'Something went wrong');
-        shakePanel(loginPanel);
+        showFormIssue(loginPanel, data.message, resolveField(data.field, loginForm));
         grecaptcha.reset(); // Invalidate current recaptcha token on failure
       }
     } catch {
@@ -399,22 +612,95 @@ if (loginForm) {
 }
 
 /* ══════════════════════════════════════
-   7. FORGOT PASSWORD SUBMISSION
+   7. FORGOT PASSWORD SUBMISSION (3-STEP)
    ══════════════════════════════════════ */
+const fpStep1 = document.getElementById('fpStep1');
+const fpStep2 = document.getElementById('fpStep2');
+const fpStep3 = document.getElementById('fpStep3');
+
+const fpEmailInput = document.getElementById('fp-email');
+const fpCodeInput = document.getElementById('fp-code');
+const fpNewPass = document.getElementById('fp-new-pass');
+const fpConfirmPass = document.getElementById('fp-confirm-pass');
+const fpReqLength = document.getElementById('fp-req-length');
+const fpReqUpper = document.getElementById('fp-req-upper');
+const fpReqNumber = document.getElementById('fp-req-number');
+const fpReqMatch = document.getElementById('fp-req-match');
+
 const forgotForm = document.getElementById('forgotForm');
+const codeForm = document.getElementById('codeForm');
+const resetPassForm = document.getElementById('resetPassForm');
+
+const verifyCodeBtn = document.getElementById('verifyCodeBtn');
+const resetPassBtn = document.getElementById('resetPassBtn');
+
+const fpEmailDisplay = document.getElementById('fpEmailDisplay');
+const fpResendCode = document.getElementById('fpResendCode');
+const fpBackToEmail = document.getElementById('fpBackToEmail');
+const fpBackToCode = document.getElementById('fpBackToCode');
+let fpResendTimer = null;
+
+// Helper to switch steps within forgot panel
+function switchFpStep(fromStep, toStep) {
+  if (fromStep) fromStep.style.display = 'none';
+  if (toStep) toStep.style.display = 'block';
+  setHeight(forgotPanel);
+}
+
+function validateResetPasswordRequirements() {
+  if (!fpNewPass || !fpConfirmPass) return;
+
+  const val = fpNewPass.value;
+  const confirmVal = fpConfirmPass.value;
+
+  setRequirementState(fpReqLength, val.length >= 8);
+  setRequirementState(fpReqUpper, /[A-Z]/.test(val));
+  setRequirementState(fpReqNumber, /[0-9]/.test(val));
+  setRequirementState(fpReqMatch, val === confirmVal && val.length > 0);
+
+  if (forgotPanel && cardWrapper && cardWrapper.classList.contains('show-forgot')) {
+    setHeight(forgotPanel);
+  }
+}
+
+function startResendCooldown(seconds = 60) {
+  if (!fpResendCode) return;
+  let remaining = Math.max(1, Number(seconds) || 60);
+
+  if (fpResendTimer) clearInterval(fpResendTimer);
+  fpResendCode.disabled = true;
+
+  const tick = () => {
+    fpResendCode.textContent = `Resend in ${remaining}s`;
+    remaining--;
+    if (remaining < 0) {
+      clearInterval(fpResendTimer);
+      fpResendTimer = null;
+      fpResendCode.disabled = false;
+      fpResendCode.textContent = 'Resend Code';
+    }
+  };
+
+  tick();
+  fpResendTimer = setInterval(tick, 1000);
+}
+
+if (fpNewPass) fpNewPass.addEventListener('input', validateResetPasswordRequirements);
+if (fpConfirmPass) fpConfirmPass.addEventListener('input', validateResetPasswordRequirements);
+
+// Step 1: Send Code
 if (forgotForm) {
   forgotForm.addEventListener('submit', async (e) => {
     e.preventDefault();
 
-    const email = document.getElementById('fp-email').value.trim();
+    const email = fpEmailInput.value.trim();
+    clearPanelFieldErrors(forgotPanel);
     if (!email) {
-      showToast('Please enter your email address.');
-      shakePanel(forgotPanel);
+      showFormIssue(forgotPanel, 'Please enter your email address.', fpEmailInput);
       return;
     }
     if (!isValidEmail(email)) {
-      showToast('Invalid email address.');
-      shakePanel(forgotPanel);
+      showFormIssue(forgotPanel, 'Invalid email address.', fpEmailInput);
       return;
     }
 
@@ -422,17 +708,182 @@ if (forgotForm) {
       forgotBtn.disabled = true;
       forgotBtn.innerHTML = '<span>Sending...</span>';
 
-      // Simulate API call
-      await new Promise(r => setTimeout(r, 1500));
+      const res  = await fetch('forgot_password.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ csrf_token: getCsrfToken(forgotForm), action: 'send_code', email })
+      });
+      const data = await res.json();
 
-      showToast('Reset link sent to your email!');
-      document.getElementById('fp-email').value = '';
-      setTimeout(showLogin, 1800);
+      if (data.status === 'success') {
+        showToast(data.message);
+        if (fpEmailDisplay) fpEmailDisplay.textContent = email;
+        switchFpStep(fpStep1, fpStep2);
+        startResendCooldown(60);
+      } else {
+        if (data.retry_after) startResendCooldown(data.retry_after);
+        showFormIssue(forgotPanel, data.message, resolveField(data.field, forgotForm));
+      }
+    } catch {
+      showToast('Server error. Please try again.');
+      shakePanel(forgotPanel);
+    } finally {
+      forgotBtn.disabled = false;
+      forgotBtn.innerHTML = '<span>Send Code</span><i class="fa-solid fa-paper-plane"></i>';
+    }
+  });
+}
+
+// Step 2: Verify Code
+if (codeForm) {
+  codeForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const email = fpEmailInput.value.trim();
+    const code = fpCodeInput.value.trim();
+    clearPanelFieldErrors(codeForm);
+
+    if (!code || code.length !== 6) {
+      showFormIssue(forgotPanel, 'Please enter the 6-digit code.', fpCodeInput);
+      return;
+    }
+
+    try {
+      verifyCodeBtn.disabled = true;
+      verifyCodeBtn.innerHTML = '<span>Verifying...</span>';
+
+      const res = await fetch('forgot_password.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ csrf_token: getCsrfToken(codeForm), action: 'verify_code', email, code })
+      });
+      const data = await res.json();
+
+      if (data.status === 'success') {
+        showToast(data.message);
+        validateResetPasswordRequirements();
+        switchFpStep(fpStep2, fpStep3);
+      } else {
+        showFormIssue(forgotPanel, data.message, resolveField(data.field, codeForm));
+      }
+    } catch {
+      showToast('Server error. Please try again.');
+      shakePanel(forgotPanel);
+    } finally {
+      verifyCodeBtn.disabled = false;
+      verifyCodeBtn.innerHTML = '<span>Verify Code</span><i class="fa-solid fa-check-circle"></i>';
+    }
+  });
+}
+
+// Step 3: Reset Password
+if (resetPassForm) {
+  resetPassForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const email = fpEmailInput.value.trim();
+    const code = fpCodeInput.value.trim();
+    const new_password = fpNewPass.value;
+    const confirm_password = fpConfirmPass.value;
+    clearPanelFieldErrors(resetPassForm);
+
+    if (!new_password || !confirm_password) {
+      showFormIssue(forgotPanel, 'Please fill in all password fields.', !new_password ? fpNewPass : fpConfirmPass);
+      return;
+    }
+    if (new_password.length < 8) {
+      showFormIssue(forgotPanel, 'Password must be at least 8 characters.', fpNewPass);
+      return;
+    }
+    if (!/[A-Z]/.test(new_password)) {
+      showFormIssue(forgotPanel, 'Password must contain at least one uppercase letter.', fpNewPass);
+      return;
+    }
+    if (!/[0-9]/.test(new_password)) {
+      showFormIssue(forgotPanel, 'Password must contain at least one number.', fpNewPass);
+      return;
+    }
+    if (new_password !== confirm_password) {
+      showFormIssue(forgotPanel, 'Passwords do not match.', fpConfirmPass);
+      return;
+    }
+
+    try {
+      resetPassBtn.disabled = true;
+      resetPassBtn.innerHTML = '<span>Resetting...</span>';
+
+      const res = await fetch('forgot_password.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ csrf_token: getCsrfToken(resetPassForm), action: 'reset_pass', email, code, new_password, confirm_password })
+      });
+      const data = await res.json();
+
+      if (data.status === 'success') {
+        showToast(data.message);
+        // Clear all fields
+        fpEmailInput.value = '';
+        fpCodeInput.value = '';
+        fpNewPass.value = '';
+        fpConfirmPass.value = '';
+        validateResetPasswordRequirements();
+        // Go back to login and reset steps
+        switchFpStep(fpStep3, fpStep1);
+        setTimeout(showLogin, 1000);
+      } else {
+        showFormIssue(forgotPanel, data.message, resolveField(data.field, resetPassForm));
+      }
+    } catch {
+      showToast('Server error. Please try again.');
+      shakePanel(forgotPanel);
+    } finally {
+      resetPassBtn.disabled = false;
+      resetPassBtn.innerHTML = '<span>Set New Password</span><i class="fa-solid fa-key"></i>';
+    }
+  });
+}
+
+// Navigation helpers
+if (fpBackToEmail) {
+  fpBackToEmail.addEventListener('click', (e) => {
+    e.preventDefault();
+    switchFpStep(fpStep2, fpStep1);
+  });
+}
+if (fpBackToCode) {
+  fpBackToCode.addEventListener('click', (e) => {
+    e.preventDefault();
+    switchFpStep(fpStep3, fpStep2);
+  });
+}
+if (fpResendCode) {
+  fpResendCode.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const email = fpEmailInput.value.trim();
+    if (!email) return;
+
+    try {
+      fpResendCode.disabled = true;
+      fpResendCode.textContent = 'Resending...';
+      const res  = await fetch('forgot_password.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ csrf_token: getCsrfToken(forgotForm), action: 'send_code', email })
+      });
+      const data = await res.json();
+      showToast(data.message);
+      if (data.status === 'success') {
+        startResendCooldown(60);
+      } else if (data.retry_after) {
+        startResendCooldown(data.retry_after);
+      }
     } catch {
       showToast('Server error. Please try again.');
     } finally {
-      forgotBtn.disabled = false;
-      forgotBtn.innerHTML = '<span>Send Reset Link</span><i class="fa-solid fa-paper-plane"></i>';
+      if (!fpResendTimer) {
+        fpResendCode.disabled = false;
+        fpResendCode.textContent = 'Resend Code';
+      }
     }
   });
 }
@@ -461,7 +912,7 @@ function handleGoogleCredential(response) {
 }
 
 function initializeGoogle() {
-  if (typeof GOOGLE_CLIENT_ID !== 'undefined' && GOOGLE_CLIENT_ID) {
+  if (typeof GOOGLE_CLIENT_ID !== 'undefined' && GOOGLE_CLIENT_ID && !GOOGLE_CLIENT_ID.startsWith('YOUR_GOOGLE_CLIENT_ID')) {
     if (window.google && window.google.accounts) {
       try {
         google.accounts.id.initialize({
@@ -495,7 +946,7 @@ function initializeGoogle() {
 
 // Check if GOOGLE_CLIENT_ID constant exists and initialize the GIS API with polling fallback
 window.addEventListener('load', () => {
-  if (typeof GOOGLE_CLIENT_ID !== 'undefined' && GOOGLE_CLIENT_ID) {
+  if (typeof GOOGLE_CLIENT_ID !== 'undefined' && GOOGLE_CLIENT_ID && !GOOGLE_CLIENT_ID.startsWith('YOUR_GOOGLE_CLIENT_ID')) {
     if (window.google && window.google.accounts) {
       initializeGoogle();
     } else {
@@ -513,6 +964,11 @@ window.addEventListener('load', () => {
           }
         }
       }, 100);
+    }
+  } else {
+    const btnContainer = document.getElementById('google-signin-btn');
+    if (btnContainer) {
+      btnContainer.innerHTML = '<div class="google-signin-fallback">Google Sign-In is not configured.</div>';
     }
   }
 });

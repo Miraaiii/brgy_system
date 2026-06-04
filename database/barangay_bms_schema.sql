@@ -2,7 +2,7 @@
 -- Barangay Sta. Rosa 1 Management System
 -- Database : barangay_bms
 -- Engine   : InnoDB  |  Charset: utf8mb4  |  MySQL 8.0
--- Tables   : 17  (14 core + notifications + announcements + audit_logs)
+-- Tables   : 18  (15 core + notifications + announcements + audit_logs)
 --
 -- HOW TO USE:
 --   1. Open phpMyAdmin → http://localhost/phpmyadmin
@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS users (
   username      VARCHAR(60)     NOT NULL,
   email         VARCHAR(120)    NOT NULL,
   password_hash VARCHAR(255)    NOT NULL,
+  fullname      VARCHAR(150)    NULL     DEFAULT NULL,
+  contact       VARCHAR(20)     NULL     DEFAULT NULL,
+  purok         VARCHAR(40)     NULL     DEFAULT NULL,
   role          ENUM(
                   'captain',
                   'secretary',
@@ -47,9 +50,60 @@ CREATE TABLE IF NOT EXISTS users (
   UNIQUE KEY uq_users_email    (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- TABLE 2: pending_resident_registrations
+-- Temporary queue for self-registering residents awaiting Secretary approval.
+-- Approved residents belong in residents; all login accounts belong in users.
+CREATE TABLE IF NOT EXISTS pending_resident_registrations (
+  id                     INT UNSIGNED  NOT NULL AUTO_INCREMENT,
+  user_id                INT UNSIGNED  NOT NULL,
+  first_name             VARCHAR(60)   NOT NULL,
+  middle_name            VARCHAR(60)   NULL     DEFAULT NULL,
+  last_name              VARCHAR(60)   NOT NULL,
+  email                  VARCHAR(120)  NOT NULL,
+  mobile_number          VARCHAR(11)   NOT NULL,
+  birth_date             DATE          NOT NULL,
+  birth_place            VARCHAR(120)  NOT NULL,
+  sex                    ENUM('male','female') NOT NULL,
+  civil_status           ENUM(
+                           'single',
+                           'married',
+                           'widowed',
+                           'separated',
+                           'annulled'
+                         )             NOT NULL DEFAULT 'single',
+  nationality            VARCHAR(60)   NOT NULL DEFAULT 'Filipino',
+  occupation             VARCHAR(80)   NULL     DEFAULT NULL,
+  house_number           VARCHAR(20)   NULL     DEFAULT NULL,
+  street_name            VARCHAR(100)  NOT NULL,
+  purok_zone             VARCHAR(40)   NULL     DEFAULT NULL,
+  valid_id_path          VARCHAR(255)  NOT NULL,
+  valid_id_original_name VARCHAR(200)  NOT NULL,
+  valid_id_mime_type     VARCHAR(80)   NOT NULL,
+  valid_id_size          INT UNSIGNED  NOT NULL,
+  terms_agreed_at        TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  status                 ENUM(
+                           'pending',
+                           'approved',
+                           'rejected'
+                         )             NOT NULL DEFAULT 'pending',
+  reviewed_by            INT UNSIGNED  NULL     DEFAULT NULL,
+  reviewed_at            TIMESTAMP     NULL     DEFAULT NULL,
+  created_at             TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at             TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                       ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_pending_reg_user (user_id),
+  KEY idx_pending_reg_status (status),
+  KEY idx_pending_reg_email (email),
+  CONSTRAINT fk_pending_reg_user FOREIGN KEY (user_id)
+    REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_pending_reg_reviewer FOREIGN KEY (reviewed_by)
+    REFERENCES users (id) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 
 -- ─────────────────────────────────────────────────────────────
--- TABLE 2: households
+-- TABLE 3: households
 -- Address unit — created before residents (residents FK here)
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS households (
@@ -65,8 +119,8 @@ CREATE TABLE IF NOT EXISTS households (
 
 
 -- ─────────────────────────────────────────────────────────────
--- TABLE 3: residents
--- Master resident profile — linked to users & households
+-- TABLE 4: residents
+-- Master resident profile for approved residents only; linked to users and households
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS residents (
   id               INT UNSIGNED  NOT NULL AUTO_INCREMENT,
@@ -129,7 +183,7 @@ ALTER TABLE households
 
 
 -- ─────────────────────────────────────────────────────────────
--- TABLE 4: officials
+-- TABLE 5: officials
 -- Official position & term record per user
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS officials (
@@ -158,7 +212,7 @@ CREATE TABLE IF NOT EXISTS officials (
 
 
 -- ─────────────────────────────────────────────────────────────
--- TABLE 5: document_types
+-- TABLE 6: document_types
 -- Configuration for all issuable document types
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS document_types (
@@ -179,7 +233,7 @@ CREATE TABLE IF NOT EXISTS document_types (
 
 
 -- ─────────────────────────────────────────────────────────────
--- TABLE 6: document_requests
+-- TABLE 7: document_requests
 -- Every request submitted by a resident
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS document_requests (
@@ -188,6 +242,7 @@ CREATE TABLE IF NOT EXISTS document_requests (
   resident_id   INT UNSIGNED  NOT NULL,
   doc_type_id   INT UNSIGNED  NOT NULL,
   purpose       TEXT          NOT NULL,
+  extra_details LONGTEXT      NULL DEFAULT NULL,
   status        ENUM(
                   'pending',
                   'processing',
@@ -226,7 +281,7 @@ CREATE TABLE IF NOT EXISTS document_requests (
 
 
 -- ─────────────────────────────────────────────────────────────
--- TABLE 7: request_attachments
+-- TABLE 8: request_attachments
 -- Files uploaded alongside a document request
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS request_attachments (
@@ -246,7 +301,7 @@ CREATE TABLE IF NOT EXISTS request_attachments (
 
 
 -- ─────────────────────────────────────────────────────────────
--- TABLE 8: issued_documents
+-- TABLE 9: issued_documents
 -- Final issued document — 1-to-1 with an approved request
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS issued_documents (
@@ -270,7 +325,7 @@ CREATE TABLE IF NOT EXISTS issued_documents (
 
 
 -- ─────────────────────────────────────────────────────────────
--- TABLE 9: collections
+-- TABLE 10: collections
 -- Fee payments collected — linked to document requests
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS collections (
@@ -303,7 +358,7 @@ CREATE TABLE IF NOT EXISTS collections (
 
 
 -- ─────────────────────────────────────────────────────────────
--- TABLE 10: expenditures
+-- TABLE 11: expenditures
 -- Barangay expenses logged by the Treasurer
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS expenditures (
@@ -328,7 +383,7 @@ CREATE TABLE IF NOT EXISTS expenditures (
 
 
 -- ─────────────────────────────────────────────────────────────
--- TABLE 11: budget_items
+-- TABLE 12: budget_items
 -- Annual budget line items per category and fiscal year
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS budget_items (
@@ -350,7 +405,7 @@ CREATE TABLE IF NOT EXISTS budget_items (
 
 
 -- ─────────────────────────────────────────────────────────────
--- TABLE 12: blotter_cases
+-- TABLE 13: blotter_cases
 -- Incident and complaint cases
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS blotter_cases (
@@ -383,7 +438,7 @@ CREATE TABLE IF NOT EXISTS blotter_cases (
 
 
 -- ─────────────────────────────────────────────────────────────
--- TABLE 13: blotter_parties
+-- TABLE 14: blotter_parties
 -- People involved in a blotter case
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS blotter_parties (
@@ -411,7 +466,7 @@ CREATE TABLE IF NOT EXISTS blotter_parties (
 
 
 -- ─────────────────────────────────────────────────────────────
--- TABLE 14: blotter_hearings
+-- TABLE 15: blotter_hearings
 -- Scheduled mediation hearings per blotter case
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS blotter_hearings (
@@ -441,7 +496,27 @@ CREATE TABLE IF NOT EXISTS blotter_hearings (
 
 
 -- ─────────────────────────────────────────────────────────────
--- TABLE 15: notifications
+-- TABLE 15B: blotter_evidence
+-- Optional evidence files uploaded by residents or staff
+CREATE TABLE IF NOT EXISTS blotter_evidence (
+  id          INT UNSIGNED  NOT NULL AUTO_INCREMENT,
+  case_id     INT UNSIGNED  NOT NULL,
+  file_name   VARCHAR(200)  NOT NULL,
+  file_path   VARCHAR(255)  NOT NULL,
+  file_type   VARCHAR(80)   NULL DEFAULT NULL,
+  file_size   INT UNSIGNED  NULL DEFAULT NULL,
+  uploaded_by INT UNSIGNED  NULL DEFAULT NULL,
+  uploaded_at TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_blotter_evidence_case (case_id),
+  CONSTRAINT fk_blotter_evidence_case FOREIGN KEY (case_id)
+    REFERENCES blotter_cases (id) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_blotter_evidence_user FOREIGN KEY (uploaded_by)
+    REFERENCES users (id) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- TABLE 16: notifications
 -- In-app notifications per user
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS notifications (
@@ -462,7 +537,7 @@ CREATE TABLE IF NOT EXISTS notifications (
 
 
 -- ─────────────────────────────────────────────────────────────
--- TABLE 16: announcements
+-- TABLE 17: announcements
 -- Barangay news and announcements posted by admins
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS announcements (
@@ -496,7 +571,7 @@ CREATE TABLE IF NOT EXISTS announcements (
 
 
 -- ─────────────────────────────────────────────────────────────
--- TABLE 17: audit_logs
+-- TABLE 18: audit_logs
 -- Tracks every significant action by any user
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS audit_logs (
@@ -523,13 +598,13 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 -- SEED: document_types — required before any requests
 -- ─────────────────────────────────────────────────────────────
 INSERT INTO document_types
-  (name, slug, fee, processing_days, requires_approval) VALUES
-  ('Barangay Clearance',        'barangay-clearance',    75.00, 1, 1),
-  ('Certificate of Residency',  'certificate-residency', 50.00, 1, 1),
-  ('Certificate of Indigency',  'certificate-indigency',  0.00, 1, 1),
-  ('Business Clearance',        'business-clearance',   300.00, 2, 1),
-  ('Barangay Certification',    'barangay-certification', 50.00, 1, 1),
-  ('Blotter Certificate',       'blotter-certificate',  100.00, 2, 1);
+  (name, slug, fee, processing_days, requires_approval, requirements) VALUES
+  ('Barangay Clearance',        'barangay-clearance',       75.00, 1, 1, 'Valid government ID; Proof of residency'),
+  ('Certificate of Residency',  'certificate-residency',    50.00, 1, 1, 'Valid government ID; Proof of address or utility bill'),
+  ('Certificate of Indigency',  'certificate-indigency',     0.00, 1, 1, 'Valid government ID; Proof of residency; Supporting document for assistance request if available'),
+  ('Business Clearance',        'business-clearance',      300.00, 2, 1, 'Valid government ID; Proof of business address; Business registration document if available'),
+  ('Barangay Certification',    'barangay-certification',   50.00, 1, 1, 'Valid government ID; Supporting document for the certification type'),
+  ('Blotter Certificate',       'blotter-certificate',     100.00, 2, 1, 'Valid government ID; Blotter case reference number');
 
 
 -- ─────────────────────────────────────────────────────────────
@@ -540,8 +615,9 @@ INSERT INTO document_types
 --   echo password_hash('Admin@BMS2025', PASSWORD_BCRYPT);
 -- ─────────────────────────────────────────────────────────────
 INSERT INTO users
-  (username, email, password_hash, role, status) VALUES
+  (username, fullname, email, password_hash, role, status) VALUES
   ('admin_captain',
+   'Juan Reyes',
    'captain@starosa1.gov.ph',
    '$2y$10$ReplaceThisWithRealBcryptHashFromPHP',
    'captain',
@@ -550,6 +626,6 @@ INSERT INTO users
 
 -- ─────────────────────────────────────────────────────────────
 -- END OF SCRIPT
--- 17 tables created  |  6 document types seeded
+-- 18 tables created  |  6 document types seeded
 -- 1 default admin account seeded (change password before go-live)
 -- ─────────────────────────────────────────────────────────────

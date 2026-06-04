@@ -1,4 +1,7 @@
 <?php
+require_once 'includes/public_nav.php';
+require_once 'includes/public_footer.php';
+
 // ============================================================
 // Barangay Sta. Rosa 1 Management System — Homepage
 // File: index.php | Stack: HTML + CSS + JS + Bootstrap 5 + PHP
@@ -68,6 +71,7 @@ $services = [
   <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <!-- AOS – Animate On Scroll -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/aos@2.3.4/dist/aos.css">
+  <link rel="stylesheet" href="assets/css/public_layout.css">
 
   <style>
     /* ===========================
@@ -1040,50 +1044,7 @@ $services = [
 </head>
 <body>
 
-<!-- ============================================================
-     NAVBAR
-============================================================ -->
-<nav class="bms-nav" id="mainNav" role="navigation" aria-label="Main navigation">
-  <div class="nav-inner">
-    <a class="nav-brand" href="index.php" aria-label="<?= $barangay_name ?> homepage">
-      <div class="nav-seal" aria-hidden="true"><i class="bi bi-shield-fill"></i></div>
-      <div class="nav-brand-text">
-        <div class="brgy-name"><?= $barangay_name ?></div>
-        <div class="brgy-place"><?= $municipality ?></div>
-      </div>
-    </a>
-
-    <div class="nav-links" role="menubar">
-      <a href="index.php" class="active" role="menuitem">Home</a>
-      <a href="officials.php" role="menuitem">Officials</a>
-      <a href="services.php" role="menuitem">Services</a>
-      <a href="announcements.php" role="menuitem">News</a>
-      <a href="contact.php" role="menuitem">Contact</a>
-    </div>
-
-    <div class="nav-cta">
-      <a href="login.php" class="btn-nav-login">Log In</a>
-      <a href="register.php" class="btn-nav-register"><i class="bi bi-person-plus-fill"></i> Register</a>
-    </div>
-
-    <button class="nav-toggle" id="navToggle" aria-label="Toggle menu" aria-expanded="false">
-      <i class="bi bi-list"></i>
-    </button>
-  </div>
-
-  <!-- Mobile menu -->
-  <div class="nav-mobile-menu" id="mobileMenu" role="menu">
-    <a href="index.php" role="menuitem">Home</a>
-    <a href="officials.php" role="menuitem">Officials</a>
-    <a href="services.php" role="menuitem">Services</a>
-    <a href="announcements.php" role="menuitem">News</a>
-    <a href="contact.php" role="menuitem">Contact</a>
-    <div class="mobile-cta">
-      <a href="login.php" class="btn-nav-login" style="text-align:center" role="menuitem">Log In</a>
-      <a href="register.php" class="btn-nav-register" style="text-align:center" role="menuitem">Register</a>
-    </div>
-  </div>
-</nav>
+<?php render_public_nav('home'); ?>
 
 <!-- ============================================================
      HERO
@@ -1103,10 +1064,10 @@ $services = [
           Request documents, track your applications, and access all barangay services — anywhere, anytime. Noveleta, Cavite.
         </p>
         <div class="hero-actions">
-          <a href="login.php" class="btn-hero-primary">
+          <a href="register.php" class="btn-hero-primary">
             <i class="bi bi-person-plus-fill"></i> Create Resident Account
           </a>
-          <a href="services.php" class="btn-hero-secondary">
+          <a href="<?= htmlspecialchars(public_page_link('services.php', 'index.php#services')) ?>" class="btn-hero-secondary">
             <i class="bi bi-file-earmark-text"></i> View Services
           </a>
         </div>
@@ -1154,7 +1115,7 @@ $services = [
               <i class="bi bi-arrow-right arrow"></i>
             </a>
             <div style="margin-top:1rem;padding-top:.75rem;border-top:1px solid rgba(255,255,255,.1);text-align:center">
-              <a href="services.php" style="font-size:12.5px;color:rgba(255,255,255,.45);text-decoration:none;">
+              <a href="<?= htmlspecialchars(public_page_link('services.php', 'index.php#services')) ?>" style="font-size:12.5px;color:rgba(255,255,255,.45);text-decoration:none;">
                 View all 6 document types <i class="bi bi-arrow-right" style="font-size:11px"></i>
               </a>
             </div>
@@ -1201,7 +1162,7 @@ $services = [
         <p class="section-sub">All documents are processed by the Barangay Secretary and signed by the Punong Barangay. Register for a free account to get started.</p>
       </div>
       <div class="col-lg-5 d-flex align-items-end justify-content-lg-end mt-3 mt-lg-0">
-        <a href="services.php" class="btn" style="background:var(--navy);color:#fff;border-radius:10px;padding:11px 22px;font-weight:600;font-size:14px;display:flex;align-items:center;gap:6px;">
+        <a href="<?= htmlspecialchars(public_page_link('services.php', 'index.php#services')) ?>" class="btn" style="background:var(--navy);color:#fff;border-radius:10px;padding:11px 22px;font-weight:600;font-size:14px;display:flex;align-items:center;gap:6px;">
           All services <i class="bi bi-arrow-right"></i>
         </a>
       </div>
@@ -1283,7 +1244,7 @@ $services = [
         <p class="section-sub">Stay updated with official notices, programs, events, and emergency advisories from Barangay Sta. Rosa 1.</p>
       </div>
       <div class="col-lg-5 d-flex align-items-end justify-content-lg-end mt-3 mt-lg-0">
-        <a href="announcements.php" class="btn" style="background:var(--navy);color:#fff;border-radius:10px;padding:11px 22px;font-weight:600;font-size:14px;display:flex;align-items:center;gap:6px;">
+        <a href="<?= htmlspecialchars(public_page_link('announcements.php', 'index.php#announcements')) ?>" class="btn" style="background:var(--navy);color:#fff;border-radius:10px;padding:11px 22px;font-weight:600;font-size:14px;display:flex;align-items:center;gap:6px;">
           All announcements <i class="bi bi-arrow-right"></i>
         </a>
       </div>
@@ -1305,7 +1266,7 @@ $services = [
           <p class="ann-excerpt"><?= $ann['excerpt'] ?></p>
           <div class="ann-footer">
             <span class="ann-date"><i class="bi bi-calendar3"></i> <?= $ann['date'] ?></span>
-            <a href="announcements.php?id=<?= $i+1 ?>" class="ann-read">Read more <i class="bi bi-arrow-right"></i></a>
+            <a href="<?= htmlspecialchars(public_page_link('announcements.php', 'index.php#announcements')) ?>" class="ann-read">Read more <i class="bi bi-arrow-right"></i></a>
           </div>
         </article>
       </div>
@@ -1326,7 +1287,7 @@ $services = [
         <p class="section-sub">Elected to serve the residents of Barangay Sta. Rosa 1 for the term <?= $years_serving ?>.</p>
       </div>
       <div class="col-lg-5 offset-lg-1 d-flex align-items-end justify-content-lg-end mt-3 mt-lg-0">
-        <a href="officials.php" class="btn" style="background:rgba(255,255,255,.1);color:#fff;border:1.5px solid rgba(255,255,255,.2);border-radius:10px;padding:11px 22px;font-weight:600;font-size:14px;display:flex;align-items:center;gap:6px;">
+        <a href="<?= htmlspecialchars(public_page_link('officials.php', 'index.php#officials')) ?>" class="btn" style="background:rgba(255,255,255,.1);color:#fff;border:1.5px solid rgba(255,255,255,.2);border-radius:10px;padding:11px 22px;font-weight:600;font-size:14px;display:flex;align-items:center;gap:6px;">
           Full directory <i class="bi bi-arrow-right"></i>
         </a>
       </div>
@@ -1386,7 +1347,7 @@ $services = [
       <h2 class="cta-title" id="cta-heading">Ready to Access Barangay Services Online?</h2>
       <p class="cta-sub">Create your free resident account today and experience a faster, more convenient way to get your barangay documents.</p>
       <div class="cta-buttons">
-        <a href="login.php" class="btn-cta-primary">
+        <a href="register.php" class="btn-cta-primary">
           <i class="bi bi-person-plus-fill"></i> Create Free Account
         </a>
         <a href="login.php" class="btn-cta-secondary">
@@ -1417,7 +1378,7 @@ $services = [
           <div class="contact-icon"><i class="bi bi-telephone-fill"></i></div>
           <div>
             <div class="contact-label">Phone / Hotline</div>
-            <div class="contact-value">+63 912 XXX XXXX</div>
+            <div class="contact-value">+63 912 000 0000</div>
           </div>
         </div>
       </div>
@@ -1443,82 +1404,7 @@ $services = [
   </div>
 </div>
 
-<!-- ============================================================
-     FOOTER
-============================================================ -->
-<footer role="contentinfo">
-  <div class="container">
-    <div class="row g-5">
-      <div class="col-lg-4">
-        <div class="footer-brand">
-          <div class="footer-seal"><i class="bi bi-shield-fill"></i></div>
-          <div class="footer-name"><?= $barangay_name ?></div>
-          <div class="footer-muni"><?= $municipality ?></div>
-        </div>
-        <p class="footer-desc">Committed to serving every household of Barangay Sta. Rosa 1 through transparent, efficient, and technology-enabled governance.</p>
-        <div class="footer-socials" style="margin-top:1rem;">
-          <a href="#" class="social-btn" aria-label="Facebook"><i class="bi bi-facebook"></i></a>
-          <a href="#" class="social-btn" aria-label="Email"><i class="bi bi-envelope-fill"></i></a>
-          <a href="#" class="social-btn" aria-label="Phone"><i class="bi bi-telephone-fill"></i></a>
-        </div>
-      </div>
-
-      <div class="col-sm-6 col-lg-2">
-        <div class="footer-heading">Services</div>
-        <ul class="footer-links">
-          <li><a href="services.php#clearance">Barangay Clearance</a></li>
-          <li><a href="services.php#residency">Certificate of Residency</a></li>
-          <li><a href="services.php#indigency">Certificate of Indigency</a></li>
-          <li><a href="services.php#business">Business Clearance</a></li>
-          <li><a href="services.php#certification">Barangay Certification</a></li>
-          <li><a href="services.php#blotter">Blotter Certificate</a></li>
-        </ul>
-      </div>
-
-      <div class="col-sm-6 col-lg-2">
-        <div class="footer-heading">Quick Links</div>
-        <ul class="footer-links">
-          <li><a href="index.php">Home</a></li>
-          <li><a href="officials.php">Officials</a></li>
-          <li><a href="announcements.php">Announcements</a></li>
-          <li><a href="contact.php">Contact Us</a></li>
-          <li><a href="login.php">Register</a></li>
-          <li><a href="login.php">Resident Login</a></li>
-        </ul>
-      </div>
-
-      <div class="col-sm-6 col-lg-2">
-        <div class="footer-heading">Emergency</div>
-        <ul class="footer-links">
-          <li><a href="tel:166">PNP Hotline: 166</a></li>
-          <li><a href="tel:911">Emergency: 911</a></li>
-          <li><a href="tel:1555">BFP (Fire): 1555</a></li>
-          <li><a href="tel:8525-0000">NDRRMC: 8525-0000</a></li>
-        </ul>
-      </div>
-
-      <div class="col-sm-6 col-lg-2">
-        <div class="footer-heading">Government</div>
-        <ul class="footer-links">
-          <li><a href="https://noveleta.gov.ph" target="_blank" rel="noopener">Noveleta LGU</a></li>
-          <li><a href="https://caviteprovince.gov.ph" target="_blank" rel="noopener">Province of Cavite</a></li>
-          <li><a href="https://dilg.gov.ph" target="_blank" rel="noopener">DILG</a></li>
-          <li><a href="https://bagong.pilipinas.gov.ph" target="_blank" rel="noopener">Bagong Pilipinas</a></li>
-        </ul>
-      </div>
-    </div>
-
-    <hr class="footer-divider">
-    <div class="footer-bottom">
-      <span>&copy; <?= date('Y') ?> <?= $barangay_name ?>, <?= $municipality ?>. All rights reserved.</span>
-      <span>
-        <a href="privacy.php">Privacy Policy</a> &nbsp;·&nbsp;
-        <a href="terms.php">Terms of Use</a> &nbsp;·&nbsp;
-        <a href="login.php" style="opacity:.4">Admin</a>
-      </span>
-    </div>
-  </div>
-</footer>
+<?php render_public_footer(); ?>
 
 <!-- Back to top -->
 <button class="back-to-top" id="backToTop" aria-label="Back to top">
@@ -1566,7 +1452,7 @@ $services = [
   // === Active nav link on scroll ===
   const sections = document.querySelectorAll('section[id], div[id="contact"]');
   const navLinks = document.querySelectorAll('.nav-links a');
-  const sectionMap = { home:'/', services:'services.php', 'how-it-works':null, announcements:'announcements.php', officials:'officials.php', contact:'contact.php' };
+  const sectionMap = { home:'index.php', services:'index.php#services', 'how-it-works':null, announcements:'index.php#announcements', officials:'index.php#officials', contact:'index.php#contact' };
 
   const observer = new IntersectionObserver(entries => {
     entries.forEach(entry => {
