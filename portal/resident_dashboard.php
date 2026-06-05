@@ -928,6 +928,6 @@ $emergency_numbers = 'PNP 166, Fire 1555, NDRRMC 825-0000';
     </main>
   </div>
 
-  <script src="../assets/js/resident_dashboard.js"></script>
+  <script src="../assets/js/resident_dashboard.js?v=20260605b"></script>
 </body>
 </html>

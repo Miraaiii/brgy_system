@@ -1,0 +1,275 @@
+<?php
+require_once __DIR__ . '/admin_helpers.php';
+
+function adm_normalize_admin_link($link) {
+    $link = trim((string)$link);
+    if ($link === '') {
+        return '#';
+    }
+    if (preg_match('/^https?:\/\//i', $link)) {
+        return $link;
+    }
+    if (strpos($link, '../') === 0 || strpos($link, '#') === 0) {
+        return $link;
+    }
+    if (strpos($link, 'portal/') === 0) {
+        return '../' . $link;
+    }
+    if (strpos($link, 'admin/') === 0) {
+        return substr($link, 6);
+    }
+    return $link;
+}
+
+function adm_nav_item($active, $key, $href, $icon, $label, $badge = null) {
+    $classes = 'admin-nav__link' . ($active === $key ? ' is-active' : '');
+    ?>
+    <a class="<?= adm_e($classes) ?>" href="<?= adm_e($href) ?>">
+      <i class="fa-solid <?= adm_e($icon) ?>" aria-hidden="true"></i>
+      <span><?= adm_e($label) ?></span>
+      <?php if ($badge !== null && (int)$badge > 0): ?>
+        <strong class="admin-nav__badge"><?= adm_e($badge) ?></strong>
+      <?php endif; ?>
+    </a>
+    <?php
+}
+
+function adm_avatar_markup($initials, $photo_path = '', $small = false) {
+    $class = 'avatar' . ($small ? ' avatar--small' : '');
+    $photo_path = trim((string)$photo_path);
+    if ($photo_path !== '') {
+        $src = '../' . ltrim(str_replace('\\', '/', $photo_path), '/');
+        return '<span class="' . adm_e($class) . '"><img src="' . adm_e($src) . '" alt=""></span>';
+    }
+
+    return '<span class="' . adm_e($class) . '">' . adm_e($initials) . '</span>';
+}
+
+function adm_page_start($title, $active, array $user, $page_class = '') {
+    global $conn;
+
+    $display_name = trim((string)($user['fullname'] ?? '')) ?: ($user['username'] ?? 'Secretary');
+    $initials = adm_initials($display_name);
+    $official_photo = '';
+    if (adm_table_exists($conn, 'officials')) {
+        $official = adm_fetch_one(
+            $conn,
+            'SELECT photo_path FROM officials WHERE user_id = ? AND is_active = 1 ORDER BY id DESC LIMIT 1',
+            'i',
+            [(int)$user['id']]
+        );
+        $official_photo = (string)($official['photo_path'] ?? '');
+    }
+    $pending_requests = adm_table_exists($conn, 'document_requests')
+        ? adm_scalar($conn, "SELECT COUNT(*) FROM document_requests WHERE status = 'pending'")
+        : 0;
+    $pending_verifications = adm_table_exists($conn, 'pending_resident_registrations')
+        ? adm_scalar($conn, "SELECT COUNT(*) FROM pending_resident_registrations WHERE status = 'pending'")
+        : 0;
+    $unread_count = adm_table_exists($conn, 'notifications')
+        ? adm_scalar($conn, 'SELECT COUNT(*) FROM notifications WHERE user_id = ? AND is_read = 0', 'i', [(int)$user['id']])
+        : 0;
+    $notifications = adm_table_exists($conn, 'notifications')
+        ? adm_fetch_all(
+            $conn,
+            'SELECT title, message, link, is_read, created_at
+             FROM notifications
+             WHERE user_id = ?
+             ORDER BY is_read ASC, created_at DESC
+             LIMIT 5',
+            'i',
+            [(int)$user['id']]
+        )
+        : [];
+    $flash = adm_pull_flash();
+    $body_class = trim('secretary-admin ' . $page_class);
+    ?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><?= adm_e($title) ?> - Secretary Portal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+  <link rel="shortcut icon" href="../assets/images/logo_noveleta.png">
+  <link rel="stylesheet" href="assets/css/secretary.css?v=20260605c">
+  <script>
+    (function () {
+      try {
+        var savedTheme = localStorage.getItem('barangayTheme') || localStorage.getItem('residentTheme');
+        if (savedTheme === 'dark' || (!savedTheme && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+          document.documentElement.classList.add('dark-mode-preload');
+        }
+      } catch (error) {}
+    })();
+  </script>
+</head>
+<body class="<?= adm_e($body_class) ?>">
+  <a class="skip-link" href="#mainContent">Skip to main content</a>
+
+  <aside class="admin-sidebar" id="adminSidebar" aria-label="Secretary navigation">
+    <div class="admin-sidebar__brand">
+      <a class="brand-lockup" href="dashboard.php" aria-label="Go to secretary dashboard">
+        <span class="brand-lockup__mark">
+          <img src="../assets/images/logo_noveleta.png" alt="Barangay seal">
+        </span>
+        <span>
+          <strong>Brgy. Sta. Rosa 1</strong>
+          <small>Secretary Portal</small>
+        </span>
+      </a>
+      <button class="icon-button sidebar-close" type="button" data-sidebar-close aria-label="Close navigation">
+        <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <nav class="admin-nav">
+      <span class="admin-nav__section">Daily Work</span>
+      <?php adm_nav_item($active, 'dashboard', 'dashboard.php', 'fa-chart-line', 'Dashboard'); ?>
+      <?php adm_nav_item($active, 'requests', 'requests.php', 'fa-file-lines', 'Document Requests', $pending_requests); ?>
+      <?php adm_nav_item($active, 'issued', 'issued.php', 'fa-file-circle-check', 'Issued Documents'); ?>
+
+      <span class="admin-nav__section">Residents</span>
+      <?php adm_nav_item($active, 'residents', 'residents.php', 'fa-users', 'Resident Masterlist', $pending_verifications); ?>
+      <?php adm_nav_item($active, 'resident-form', 'resident-form.php', 'fa-user-plus', 'Add Resident'); ?>
+      <?php adm_nav_item($active, 'households', 'households.php', 'fa-house-chimney-window', 'Households'); ?>
+
+      <span class="admin-nav__section">Barangay Records</span>
+      <?php adm_nav_item($active, 'blotter', 'blotter.php', 'fa-scale-balanced', 'Blotter Cases'); ?>
+      <?php adm_nav_item($active, 'hearings', 'hearings.php', 'fa-calendar-check', 'Hearings'); ?>
+      <?php adm_nav_item($active, 'announcements', 'announcements.php', 'fa-bullhorn', 'Announcements'); ?>
+      <?php adm_nav_item($active, 'events', 'events.php', 'fa-calendar-days', 'Events Calendar'); ?>
+      <?php adm_nav_item($active, 'reports', 'reports.php', 'fa-chart-pie', 'Reports'); ?>
+
+      <span class="admin-nav__section">Account</span>
+      <?php adm_nav_item($active, 'profile', 'profile.php', 'fa-user-gear', 'My Profile'); ?>
+      <a class="admin-nav__link admin-nav__link--danger" href="../logout.php">
+        <i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i>
+        <span>Logout</span>
+      </a>
+    </nav>
+
+    <div class="admin-sidebar__user">
+      <?= adm_avatar_markup($initials, $official_photo) ?>
+      <span>
+        <strong><?= adm_e($display_name) ?></strong>
+        <small>Barangay Secretary</small>
+      </span>
+    </div>
+  </aside>
+
+  <div class="sidebar-scrim" id="sidebarScrim" data-sidebar-close hidden></div>
+
+  <div class="admin-shell">
+    <header class="admin-topbar">
+      <div class="topbar-left">
+        <button class="icon-button sidebar-toggle" type="button" data-sidebar-toggle aria-label="Open navigation">
+          <i class="fa-solid fa-bars" aria-hidden="true"></i>
+        </button>
+        <a class="topbar-brand" href="dashboard.php">
+          <img src="../assets/images/logo_noveleta.png" alt="Barangay seal">
+          <span>Brgy. Sta. Rosa 1</span>
+        </a>
+      </div>
+
+      <div class="topbar-actions">
+        <span class="topbar-date"><?= adm_e(date('l, F j, Y')) ?></span>
+
+        <button class="icon-button theme-toggle" id="adminThemeToggle" type="button" aria-label="Switch to dark mode" aria-pressed="false">
+          <i class="fa-solid fa-moon" aria-hidden="true"></i>
+        </button>
+
+        <div class="dropdown-wrap">
+          <button class="icon-button notification-toggle" type="button" data-dropdown-toggle="notificationMenu" aria-label="Open notifications" aria-expanded="false">
+            <i class="fa-solid fa-bell" aria-hidden="true"></i>
+            <?php if ($unread_count > 0): ?>
+              <span class="count-badge"><?= adm_e($unread_count) ?></span>
+            <?php endif; ?>
+          </button>
+          <div class="dropdown-panel notification-panel" id="notificationMenu" hidden>
+            <div class="dropdown-panel__header">
+              <strong>Notifications</strong>
+              <span><?= adm_e($unread_count) ?> unread</span>
+            </div>
+            <?php if ($notifications): ?>
+              <div class="notification-list">
+                <?php foreach ($notifications as $notification): ?>
+                  <a class="notification-item <?= ((int)$notification['is_read'] === 0) ? 'is-unread' : '' ?>" href="<?= adm_e(adm_normalize_admin_link($notification['link'] ?? '#')) ?>">
+                    <strong><?= adm_e($notification['title']) ?></strong>
+                    <span><?= adm_e($notification['message']) ?></span>
+                    <small><?= adm_e(adm_relative_time($notification['created_at'])) ?></small>
+                  </a>
+                <?php endforeach; ?>
+              </div>
+            <?php else: ?>
+              <div class="empty-mini">No notifications yet.</div>
+            <?php endif; ?>
+          </div>
+        </div>
+
+        <div class="dropdown-wrap">
+          <button class="profile-chip" type="button" data-dropdown-toggle="profileMenu" aria-label="Open profile menu" aria-expanded="false">
+            <?= adm_avatar_markup($initials, $official_photo, true) ?>
+            <span class="profile-chip__text">
+              <strong><?= adm_e(adm_first_name($display_name)) ?></strong>
+              <small>Secretary</small>
+            </span>
+            <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
+          </button>
+          <div class="dropdown-panel profile-panel" id="profileMenu" hidden>
+            <div class="profile-panel__head">
+              <?= adm_avatar_markup($initials, $official_photo) ?>
+              <span>
+                <strong><?= adm_e($display_name) ?></strong>
+                <small><?= adm_e($user['email'] ?? '') ?></small>
+              </span>
+            </div>
+            <a href="profile.php"><i class="fa-solid fa-user-pen"></i> My Profile</a>
+            <a href="profile.php#change-password"><i class="fa-solid fa-lock"></i> Change Password</a>
+            <a class="danger-link" href="../logout.php"><i class="fa-solid fa-right-from-bracket"></i> Logout</a>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="admin-main" id="mainContent">
+      <?php if ($flash): ?>
+        <div class="flash flash--<?= adm_e($flash['type'] ?? 'info') ?>" role="status">
+          <i class="fa-solid <?= ($flash['type'] ?? '') === 'danger' ? 'fa-circle-exclamation' : 'fa-circle-check' ?>" aria-hidden="true"></i>
+          <span><?= adm_e($flash['message'] ?? '') ?></span>
+        </div>
+      <?php endif; ?>
+    <?php
+}
+
+function adm_page_header($eyebrow, $title, $subtitle = '', $actions_html = '') {
+    ?>
+    <section class="page-heading">
+      <div>
+        <?php if ($eyebrow !== ''): ?>
+          <p class="eyebrow"><?= adm_e($eyebrow) ?></p>
+        <?php endif; ?>
+        <h1><?= adm_e($title) ?></h1>
+        <?php if ($subtitle !== ''): ?>
+          <p><?= adm_e($subtitle) ?></p>
+        <?php endif; ?>
+      </div>
+      <?php if ($actions_html !== ''): ?>
+        <div class="page-heading__actions"><?= $actions_html ?></div>
+      <?php endif; ?>
+    </section>
+    <?php
+}
+
+function adm_page_end() {
+    ?>
+    </main>
+  </div>
+  <script src="assets/js/secretary.js?v=20260605c"></script>
+</body>
+</html>
+    <?php
+}

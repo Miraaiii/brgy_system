@@ -13,7 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const getSavedTheme = () => {
     try {
-      return localStorage.getItem('residentTheme');
+      return localStorage.getItem('barangayTheme') || localStorage.getItem('residentTheme');
     } catch (error) {
       return null;
     }
@@ -21,6 +21,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const saveTheme = (theme) => {
     try {
+      localStorage.setItem('barangayTheme', theme);
       localStorage.setItem('residentTheme', theme);
     } catch (error) {
       // Theme preference is optional when storage is unavailable.

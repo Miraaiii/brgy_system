@@ -131,9 +131,29 @@ function json_account_status($status, $email = '') {
     exit();
 }
 
+function set_official_login_notice() {
+    $_SESSION['admin_login_error'] = "Official accounts must use the official email and password login.";
+}
+
+function json_official_login_redirect() {
+    set_official_login_notice();
+    echo json_encode([
+        "status" => "redirect",
+        "message" => "Official accounts use the Secretary login portal.",
+        "redirect" => "admin/login.php"
+    ]);
+    exit();
+}
+
 function dashboard_redirect_for_role($role) {
     $role = strtolower(trim((string)$role));
-    return $role === 'resident' ? 'portal/resident_dashboard.php' : 'dashboard.php';
+    if ($role === 'resident') {
+        return 'portal/resident_dashboard.php';
+    }
+    if ($role === 'secretary') {
+        return 'admin/dashboard.php';
+    }
+    return 'dashboard.php';
 }
 
 // 1. Google OAuth Callback (POST)
@@ -189,6 +209,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['credential'])) {
         
         if ($res_g && $res_g->num_rows > 0) {
             $user_data = $res_g->fetch_assoc();
+            $role_normalized = strtolower(trim((string)($user_data['role'] ?? '')));
+            if ($role_normalized !== 'resident') {
+                set_official_login_notice();
+                header("Location: admin/login.php");
+                exit();
+            }
             $account_status = normalize_account_status($user_data['status'] ?? 'active');
             if ($account_status !== 'active') {
                 redirect_to_account_status($account_status, $user_data['email']);
@@ -240,6 +266,14 @@ if ($_SERVER["REQUEST_METHOD"] == "GET" && !isset($_SESSION['user_id']) && isset
                             clear_remember_cookie();
                             $clear_stale_remember = false;
                             redirect_to_account_status($account_status, $user_data['email']);
+                        }
+
+                        if (strtolower(trim((string)($user_data['role'] ?? ''))) !== 'resident') {
+                            $conn->query("DELETE FROM user_tokens WHERE id = " . (int)$row_tok['id']);
+                            clear_remember_cookie();
+                            set_official_login_notice();
+                            header("Location: admin/login.php");
+                            exit();
                         }
 
                         $_SESSION['user_id'] = $user_data['user_id'];
@@ -440,6 +474,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 json_account_status($account_status, $db_email);
             }
 
+            if (strtolower(trim((string)$role)) !== 'resident') {
+                forget_remember_token($conn);
+                json_official_login_redirect();
+            }
+
             $_SESSION['user_id'] = $user_id;
             $_SESSION['email'] = $db_email;
             $_SESSION['role'] = $role;
@@ -519,7 +558,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" />
 
-  <link rel="stylesheet" href="assets/css/login_register.css?v=20260603b" />
+  <link rel="stylesheet" href="assets/css/login_register.css?v=20260605a" />
   <link rel="shortcut icon" href="assets/images/logo_noveleta.png" />
 
   <!-- Google reCAPTCHA v2 API -->

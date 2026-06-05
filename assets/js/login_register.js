@@ -594,6 +594,9 @@ if (loginForm) {
       if (data.status === 'success') {
         showToast('Login successful!');
         setTimeout(() => window.location.href = data.redirect || 'portal/dashboard.php', 1000);
+      } else if (data.status === 'redirect' && data.redirect) {
+        showToast(data.message || 'Redirecting...');
+        setTimeout(() => window.location.href = data.redirect, 700);
       } else if ((data.status === 'pending' || data.status === 'suspended') && data.redirect) {
         showToast(data.message);
         setTimeout(() => window.location.href = data.redirect, 700);
