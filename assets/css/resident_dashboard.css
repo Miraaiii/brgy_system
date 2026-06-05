@@ -660,6 +660,13 @@ body.dark-mode .theme-toggle i {
   line-height: 1;
 }
 
+.finance-card__body strong {
+  display: block;
+  color: var(--ink);
+  font-size: 1.50rem;
+  line-height: 1;
+}
+
 .status-card__body small {
   display: block;
   margin-top: 6px;
@@ -678,11 +685,33 @@ body.dark-mode .theme-toggle i {
   margin-top: 16px;
 }
 
+#recent-collections table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+#recent-collections table th,
+#recent-collections table td {
+  width: calc(100% / 6);
+  text-align: left;
+}
+
+#recent-collections .quick-actions {
+  display: block;
+}
+
 .medium-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
   margin-top: 18px;
+}
+
+.panel-grid-full {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  margin-top: 16px;
 }
 
 .low-grid {

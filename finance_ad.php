@@ -1,438 +1,56 @@
 <?php
-session_start();
-date_default_timezone_set('Asia/Manila');
-
-if (!isset($_SESSION['user_id'])) {
-    header("Location: ../login.php");
-    exit();
-}
-
-include 'config/connection.php';
-
-function e($value) {
-    return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
-}
-
-function rd_bind_params($stmt, $types, array $params) {
-    if ($types === '') {
-        return true;
-    }
-
-    $refs = [];
-    foreach ($params as $key => $value) {
-        $refs[$key] = &$params[$key];
-    }
-
-    return $stmt->bind_param($types, ...$refs);
-}
-
-function rd_table_exists($conn, $table) {
-    static $cache = [];
-    if (isset($cache[$table])) {
-        return $cache[$table];
-    }
-
-    $safe_table = $conn->real_escape_string($table);
-    $result = $conn->query("SHOW TABLES LIKE '{$safe_table}'");
-    $cache[$table] = $result && $result->num_rows > 0;
-
-    return $cache[$table];
-}
-
-function rd_fetch_one($conn, $sql, $types = '', array $params = []) {
-    $stmt = $conn->prepare($sql);
-    if (!$stmt) {
-        return null;
-    }
-
-    rd_bind_params($stmt, $types, $params);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $row = $result ? $result->fetch_assoc() : null;
-    $stmt->close();
-
-    return $row ?: null;
-}
-
-function rd_fetch_all($conn, $sql, $types = '', array $params = []) {
-    $stmt = $conn->prepare($sql);
-    if (!$stmt) {
-        return [];
-    }
-
-    rd_bind_params($stmt, $types, $params);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $rows = [];
-    if ($result) {
-        while ($row = $result->fetch_assoc()) {
-            $rows[] = $row;
-        }
-    }
-    $stmt->close();
-
-    return $rows;
-}
-
-function rd_scalar($conn, $sql, $types = '', array $params = []) {
-    $row = rd_fetch_one($conn, $sql, $types, $params);
-    if (!$row) {
-        return 0;
-    }
-
-    $value = reset($row);
-    return (int)$value;
-}
-
-function rd_initials($name) {
-    $initials = '';
-    foreach (preg_split('/\s+/', trim((string)$name)) as $part) {
-        if ($part !== '') {
-            $initials .= strtoupper(substr($part, 0, 1));
-        }
-    }
-
-    return substr($initials ?: 'RS', 0, 2);
-}
-
-function rd_date($value) {
-    $time = strtotime((string)$value);
-    return $time ? date('M j, Y', $time) : 'Not set';
-}
-
-function rd_date_long($value) {
-    $time = strtotime((string)$value);
-    return $time ? date('F j, Y', $time) : 'Not set';
-}
-
-function rd_datetime($value) {
-    $time = strtotime((string)$value);
-    return $time ? date('F j, Y, g:i A', $time) : 'No hearing scheduled';
-}
-
-function rd_relative_time($value) {
-    $time = strtotime((string)$value);
-    if (!$time) {
-        return 'Recently';
-    }
-
-    $diff = time() - $time;
-    if ($diff < 60) {
-        return 'Just now';
-    }
-    if ($diff < 3600) {
-        $minutes = (int)floor($diff / 60);
-        return $minutes . ' minute' . ($minutes === 1 ? '' : 's') . ' ago';
-    }
-    if ($diff < 86400) {
-        $hours = (int)floor($diff / 3600);
-        return $hours . ' hour' . ($hours === 1 ? '' : 's') . ' ago';
-    }
-    if ($diff < 604800) {
-        $days = (int)floor($diff / 86400);
-        return $days . ' day' . ($days === 1 ? '' : 's') . ' ago';
-    }
-
-    return rd_date_long($value);
-}
-
-function rd_excerpt($value, $limit = 100) {
-    $text = trim(preg_replace('/\s+/', ' ', strip_tags((string)$value)));
-    if (strlen($text) <= $limit) {
-        return $text;
-    }
-
-    return rtrim(substr($text, 0, $limit), " \t\n\r\0\x0B.,") . '...';
-}
-
-function rd_status_label($status) {
-    $status = strtolower(trim((string)$status));
-    $labels = [
-        'pending' => 'Pending',
-        'processing' => 'Processing',
-        'for_approval' => 'For Approval',
-        'approved' => 'Ready for Pick-up',
-        'released' => 'Released',
-        'cancelled' => 'Cancelled',
-        'rejected' => 'Rejected',
-        'open' => 'Open',
-        'under_mediation' => 'Under Mediation',
-        'settled' => 'Settled',
-        'escalated' => 'Escalated',
-        'closed' => 'Closed',
-    ];
-
-    return $labels[$status] ?? ucwords(str_replace('_', ' ', $status ?: 'Unknown'));
-}
-
-function rd_status_class($status) {
-    $status = strtolower(trim((string)$status));
-    $classes = [
-        'pending' => 'pending',
-        'processing' => 'processing',
-        'for_approval' => 'processing',
-        'approved' => 'ready',
-        'released' => 'released',
-        'cancelled' => 'cancelled',
-        'rejected' => 'cancelled',
-        'open' => 'open',
-        'under_mediation' => 'mediation',
-        'settled' => 'settled',
-        'closed' => 'closed',
-        'escalated' => 'open',
-    ];
-
-    return $classes[$status] ?? 'neutral';
-}
-
-function rd_category_class($category) {
-    $category = strtolower(trim((string)$category));
-    $classes = [
-        'health' => 'health',
-        'events' => 'events',
-        'emergency' => 'emergency',
-        'notice' => 'notice',
-        'general' => 'general',
-        'ordinance' => 'notice',
-        'programs' => 'events',
-    ];
-
-    return $classes[$category] ?? 'general';
-}
-
-$user_id = (int)$_SESSION['user_id'];
-$user = rd_fetch_one(
-    $conn,
-    "SELECT id, fullname, email, role, status, contact, purok FROM users WHERE id = ? LIMIT 1",
-    "i",
-    [$user_id]
-);
-
-if (!$user) {
-    session_destroy();
-    header("Location: ../login.php");
-    exit();
-}
-
-$role = strtolower(trim((string)($user['role'] ?? 'resident')));
-if ($role !== 'resident') {
-    header("Location: dashboard.php");
-    exit();
-}
-
-$account_status = strtolower(trim((string)($user['status'] ?? 'active')));
-if ($account_status === '') {
-    $account_status = 'active';
-}
-
-if ($account_status === 'pending' || $account_status === 'suspended') {
-    $_SESSION['account_status_notice'] = [
-        'status' => $account_status,
-        'email' => $user['email'] ?? '',
-        'message' => $account_status === 'suspended'
-            ? 'Your account has been suspended. Contact the barangay office.'
-            : 'Your account is awaiting approval by the Secretary'
-    ];
-    unset($_SESSION['user_id'], $_SESSION['email'], $_SESSION['role']);
-    header("Location: ../account_status.php");
-    exit();
-}
-
-$has_households = rd_table_exists($conn, 'households');
-$resident = null;
-if (rd_table_exists($conn, 'residents')) {
-    if ($has_households) {
-        $resident = rd_fetch_one(
-            $conn,
-            "SELECT r.*, h.house_number, h.street, h.purok AS household_purok
-             FROM residents r
-             LEFT JOIN households h ON h.id = r.household_id
-             WHERE r.user_id = ?
-             LIMIT 1",
-            "i",
-            [$user_id]
-        );
-    } else {
-        $resident = rd_fetch_one($conn, "SELECT * FROM residents WHERE user_id = ? LIMIT 1", "i", [$user_id]);
-    }
-}
-
-$fullname = trim((string)($user['fullname'] ?? 'Resident'));
-$first_name = trim((string)($resident['first_name'] ?? ''));
-$last_name = trim((string)($resident['last_name'] ?? ''));
-if ($first_name === '') {
-    $parts = preg_split('/\s+/', $fullname);
-    $first_name = $parts[0] ?? 'Resident';
-}
-$display_name = trim($first_name . ' ' . $last_name);
-if ($display_name === '') {
-    $display_name = $fullname ?: 'Resident';
-}
-
-$initials = rd_initials($display_name);
-$resident_id = (int)($resident['id'] ?? 0);
-$is_verified = $account_status === 'active';
-$hour = (int)date('G');
-$greeting = $hour < 12 ? 'Good morning' : ($hour < 18 ? 'Good afternoon' : 'Good evening');
-$today_line = 'Barangay Sta. Rosa 1, Noveleta, Cavite | ' . date('l, F j, Y');
-
-$address_parts = [];
-if (!empty($resident['house_number'])) {
-    $address_parts[] = $resident['house_number'];
-}
-if (!empty($resident['street'])) {
-    $address_parts[] = $resident['street'];
-}
-$purok = $resident['household_purok'] ?? ($user['purok'] ?? '');
-if (!empty($purok)) {
-    $address_parts[] = 'Purok/Zone ' . $purok;
-}
-$address = $address_parts ? implode(', ', $address_parts) : 'Address not completed';
-
-$pending_count = 0;
-$ready_count = 0;
-$total_count = 0;
-$recent_requests = [];
-if ($resident_id > 0 && rd_table_exists($conn, 'document_requests')) {
-    $pending_count = rd_scalar(
-        $conn,
-        "SELECT COUNT(*) FROM document_requests WHERE resident_id = ? AND status IN ('pending', 'processing')",
-        "i",
-        [$resident_id]
-    );
-    $ready_count = rd_scalar(
-        $conn,
-        "SELECT COUNT(*) FROM document_requests WHERE resident_id = ? AND status IN ('approved', 'released')",
-        "i",
-        [$resident_id]
-    );
-    $total_count = rd_scalar($conn, "SELECT COUNT(*) FROM document_requests WHERE resident_id = ?", "i", [$resident_id]);
-
-    if (rd_table_exists($conn, 'document_types')) {
-        $recent_requests = rd_fetch_all(
-            $conn,
-        "SELECT dr.id, dr.reference_no, dr.purpose, dr.status, dr.created_at, dt.name AS document_name
-             FROM document_requests dr
-             INNER JOIN document_types dt ON dt.id = dr.doc_type_id
-             WHERE dr.resident_id = ?
-             ORDER BY dr.created_at DESC
-             LIMIT 5",
-            "i",
-            [$resident_id]
-        );
-    }
-}
-
-$notifications = [];
-$unread_count = 0;
-if (rd_table_exists($conn, 'notifications')) {
-    $unread_count = rd_scalar($conn, "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND is_read = 0", "i", [$user_id]);
-    $notifications = rd_fetch_all(
-        $conn,
-        "SELECT title, message, link, is_read, created_at
-         FROM notifications
-         WHERE user_id = ?
-         ORDER BY is_read ASC, created_at DESC
-         LIMIT 5",
-        "i",
-        [$user_id]
-    );
-}
-
-$announcements = [];
-if (rd_table_exists($conn, 'announcements')) {
-    $announcements = rd_fetch_all(
-        $conn,
-        "SELECT title, category, body, published_at, created_at
-         FROM announcements
-         WHERE is_published = 1
-         ORDER BY COALESCE(published_at, created_at) DESC
-         LIMIT 3"
-    );
-}
-
-$document_processing_times = [];
-if (rd_table_exists($conn, 'document_types')) {
-    $document_processing_times = rd_fetch_all(
-        $conn,
-        "SELECT name, fee, processing_days
-         FROM document_types
-         WHERE is_active = 1
-         ORDER BY name ASC
-         LIMIT 8"
-    );
-}
-
-$blotter_cases = [];
-if ($resident_id > 0 && rd_table_exists($conn, 'blotter_cases') && rd_table_exists($conn, 'blotter_parties')) {
-    $hearing_select = rd_table_exists($conn, 'blotter_hearings')
-        ? ", (SELECT MIN(bh.scheduled_at)
-              FROM blotter_hearings bh
-              WHERE bh.case_id = bc.id
-                AND bh.status IN ('scheduled', 'rescheduled')) AS next_hearing_at"
-        : ", NULL AS next_hearing_at";
-
-    $blotter_cases = rd_fetch_all(
-        $conn,
-        "SELECT DISTINCT bc.case_number, bc.incident_type, bc.status, bc.created_at, bc.incident_date, bc.updated_at{$hearing_select}
-         FROM blotter_cases bc
-         INNER JOIN blotter_parties bp ON bp.case_id = bc.id
-         WHERE bp.resident_id = ?
-         ORDER BY bc.updated_at DESC
-         LIMIT 3",
-        "i",
-        [$resident_id]
-    );
-}
-
-$profile_checks = [
-    'Full name' => trim($display_name) !== '',
-    'Email address' => trim((string)($user['email'] ?? '')) !== '',
-    'Mobile number' => trim((string)($resident['contact_number'] ?? $user['contact'] ?? '')) !== '',
-    'Date of birth' => !empty($resident['birth_date']),
-    'Place of birth' => !empty($resident['birth_place']),
-    'Sex' => !empty($resident['sex']),
-    'Civil status' => !empty($resident['civil_status']),
-    'Nationality' => !empty($resident['nationality']),
-    'Address' => !empty($resident['street']),
-    'Valid ID' => !empty($resident['valid_id_path']),
-];
-$completed_profile_items = 0;
-$missing_profile_items = [];
-foreach ($profile_checks as $label => $complete) {
-    if ($complete) {
-        $completed_profile_items++;
-    } else {
-        $missing_profile_items[] = $label;
-    }
-}
-$profile_percent = (int)round(($completed_profile_items / max(count($profile_checks), 1)) * 100);
-$sidebar_missing_summary = $missing_profile_items
-    ? 'Missing: ' . implode(', ', array_slice($missing_profile_items, 0, 2)) . (count($missing_profile_items) > 2 ? ', and more' : '')
-    : 'Ready for resident transactions';
-
-$profile_display_checks = [
-    'Name' => trim($display_name) !== '',
-    'Email' => trim((string)($user['email'] ?? '')) !== '',
-    'Mobile' => trim((string)($resident['contact_number'] ?? $user['contact'] ?? '')) !== '',
-    'Address' => !empty($resident['street']),
-    'Date of Birth' => !empty($resident['birth_date']),
-    'Valid ID' => !empty($resident['valid_id_path']),
-];
-$completed_display_items = [];
-$missing_display_items = [];
-foreach ($profile_display_checks as $label => $complete) {
-    if ($complete) {
-        $completed_display_items[] = $label;
-    } else {
-        $missing_display_items[] = $label;
-    }
-}
-
 $office_address = 'Brgy. Sta. Rosa 1, Noveleta, Cavite';
 $contact_number = '+63 912 000 0000';
 $barangay_hotline = 'Emergency Hotline 911';
 $emergency_numbers = 'PNP 166, Fire 1555, NDRRMC 825-0000';
+
+// Static placeholder values
+$profile_percent       = 80;
+$sidebar_missing_summary = 'Complete your profile';
+$unread_count          = 3;
+$notifications         = [
+    ['is_read' => 0, 'link' => '#', 'title' => 'Budget Approved', 'message' => 'Q2 budget has been approved.', 'created_at' => '2025-05-24 09:00:00'],
+    ['is_read' => 1, 'link' => '#', 'title' => 'New Payment Recorded', 'message' => 'Business permit fee collected.', 'created_at' => '2025-05-23 14:30:00'],
+];
+$initials              = 'MT';
+$first_name            = 'Maria';
+$display_name          = 'Maria Torres';
+$user                  = ['email' => 'maria.torres@brgy-starosa1.gov.ph'];
+$today_line            = date('l, F j, Y');
+$greeting              = 'Good morning';
+$pending_count         = '₱ 48,250';
+$ready_count           = '₱ 12,800';
+$total_count           = '64%';
+$document_processing_times = [];
+
+// Role & fiscal year
+$role_label            = 'Barangay Treasurer';
+$fiscal_year           = 'Fiscal Year ' . date('Y');
+
+function e($val) { return htmlspecialchars((string)$val, ENT_QUOTES, 'UTF-8'); }
+function rd_date($val) { return date('M j, Y g:i A', strtotime($val)); }
+
+// --- STATIC DEMO DATA (replace with real DB queries later) ---
+$today_collections       = 12450.00;
+$month_collections       = 187320.50;
+$last_month_collections  = 162800.00;
+$month_expenditures      = 134200.75;
+$expenditure_threshold   = 150000.00; // threshold for "red" warning
+$net_balance             = $month_collections - $month_expenditures;
+$annual_budget           = 2000000.00;
+$ytd_spent               = 534200.75;
+$budget_utilization      = ($annual_budget > 0) ? ($ytd_spent / $annual_budget) * 100 : 0;
+
+// Month-over-month % change for collections
+$mom_change = ($last_month_collections > 0)
+    ? (($month_collections - $last_month_collections) / $last_month_collections) * 100
+    : 0;
+$mom_positive = $mom_change >= 0;
+
+// Color logic
+$exp_class    = ($month_expenditures >= $expenditure_threshold) ? 'text-danger fw-bold' : 'text-dark';
+$net_class    = ($net_balance >= 0) ? 'text-success fw-bold' : 'text-danger fw-bold';
+$util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >= 70) ? 'warning' : 'success'); 
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -445,6 +63,107 @@ $emergency_numbers = 'PNP 166, Fire 1555, NDRRMC 825-0000';
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet" />
   <link rel="stylesheet" href="assets/css/resident_dashboard.css" />
+  
+  <style>
+    .welcome-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+  }
+
+  .role-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #16a34a;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 12px;
+    border-radius: 999px;
+    letter-spacing: 0.02em;
+  }
+
+  .fiscal-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255,255,255,0.15);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 4px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.3);
+    backdrop-filter: blur(4px);
+  }
+
+  .role-badge i,
+  .fiscal-badge i {
+    font-size: 11px;
+  }
+
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(1, 1fr);
+    gap: 0.75rem; /* tighten the gap slightly */
+  }
+
+  .status-card {
+    min-width: 0; /* prevents grid blowout */
+  }
+
+  .quick-action-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 180px;
+    padding: 16px 20px;
+    border-radius: 10px;
+    background: var(--card-bg, #1e2a3a);
+    border: 1px solid var(--border-color, #2e3d50);
+    color: var(--text-primary, #fff);
+    font-size: 14px;
+    font-weight: 600;
+    text-decoration: none;
+    transition: background 0.2s, border-color 0.2s, transform 0.15s;
+  }
+
+  .quick-action-btn:hover {
+    background: var(--primary, #eab308);
+    color: #000;
+    border-color: var(--primary, #eab308);
+    transform: translateY(-2px);
+  }
+
+  .quick-action-btn i {
+    font-size: 18px;
+  }
+
+  /* Tablet — 2 per row */
+  @media (min-width: 576px) {
+    .stat-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  /* Large tablet — 3 per row */
+  @media (min-width: 768px) {
+    .stat-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+
+  /* Desktop — all 5 in one row */
+  @media (min-width: 1200px) {
+    .stat-grid {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+  }
+  </style>
 </head>
 <body>
   <aside class="resident-sidebar" id="residentSidebar" aria-label="Resident sidebar">
@@ -456,48 +175,71 @@ $emergency_numbers = 'PNP 166, Fire 1555, NDRRMC 825-0000';
       </span>
     </a>
 
-    <nav class="sidebar-menu" aria-label="Resident menu">
+    <nav class="sidebar-menu" aria-label="Treasurer menu">
+
       <div class="sidebar-group">
-        <a class="sidebar-link is-active" href="#"><i class="fa-solid fa-house"></i><span>Dashboard</span></a>
+        <a class="sidebar-link is-active" href="admin/dashboard.php">
+          <i class="fa-solid fa-house"></i><span>Dashboard</span>
+        </a>
       </div>
 
       <div class="sidebar-group">
         <span class="sidebar-section-label">COLLECTIONS</span>
-        <a class="sidebar-link" href="all_collections.php"><i class="fa-solid fa-money-bill-transfer"></i><span>All Collections</span></a>
-        <a class="sidebar-link" href="#"><i class="fa-solid fa-cash-register"></i><span>Record Payment</span></a>
-        <a class="sidebar-link" href="#"><i class="fa-solid fa-file-invoice-dollar"></i><span>Document Fees</span></a>
-        <a class="sidebar-link" href="#"><i class="fa-solid fa-store"></i><span>Business Permits</span></a>
-        <a class="sidebar-link" href="#"><i class="fa-solid fa-wallet"></i><span>Other Collections</span></a>
+        <a class="sidebar-link" href="admin/finance.php?tab=collections">
+          <i class="fa-solid fa-money-bill-transfer"></i><span>All Collections</span>
+        </a>
+        <a class="sidebar-link" href="admin/finance.php?tab=record">
+          <i class="fa-solid fa-cash-register"></i><span>Record Payment</span>
+        </a>
+        <a class="sidebar-link" href="admin/finance.php?tab=receipts">
+          <i class="fa-solid fa-file-invoice-dollar"></i><span>Official Receipts</span>
+        </a>
       </div>
 
       <div class="sidebar-group">
         <span class="sidebar-section-label">EXPENDITURES</span>
-        <a class="sidebar-link" href="#"><i class="fa-solid fa-money-bill-wave"></i><span>All Expenditures</span></a>
-        <a class="sidebar-link" href="#"><i class="fa-solid fa-plus-circle"></i><span>Add Expenditures</span></a>
-        <a class="sidebar-link" href="#"><i class="fa-solid fa-layer-group"></i><span>By Category</span></a>
-        <a class="sidebar-link" href="#"><i class="fa-solid fa-user-clock"></i><span>Pending Captain Approval</span></a>
+        <a class="sidebar-link" href="admin/finance.php?tab=expenditures">
+          <i class="fa-solid fa-money-bill-wave"></i><span>All Expenditures</span>
+        </a>
+        <a class="sidebar-link" href="admin/finance.php?tab=add-exp">
+          <i class="fa-solid fa-circle-plus"></i><span>Add Expenditure</span>
+        </a>
       </div>
 
       <div class="sidebar-group">
         <span class="sidebar-section-label">BUDGET</span>
-        <a class="sidebar-link" href="#"><i class="fa-solid fa-calendar-check"></i><span>Annual Budget Plan</span></a>
-        <a class="sidebar-link" href="#"><i class="fa-solid fa-chart-pie"></i><span>Budget Utilization</span></a>
-        <a class="sidebar-link" href="#"><i class="fa-solid fa-circle-plus"></i><span>Add Budget Item</span></a>
+        <a class="sidebar-link" href="admin/finance.php?tab=budget">
+          <i class="fa-solid fa-chart-pie"></i><span>Budget Management</span>
+        </a>
       </div>
 
       <div class="sidebar-group">
         <span class="sidebar-section-label">REPORTS</span>
-        <a class="sidebar-link" href="#"><i class="fa-solid fa-calendar-days"></i><span>Monthly Summary</span></a>
-        <a class="sidebar-link" href="#"><i class="fa-solid fa-chart-line"></i><span>Quarterly Report</span></a>
-        <a class="sidebar-link" href="#"><i class="fa-solid fa-file-invoice-dollar"></i><span>Annual Statement</span></a>
-        <a class="sidebar-link" href="#"><i class="fa-solid fa-file-export"></i><span>Export to PDF / Excel</span></a>
+        <a class="sidebar-link" href="admin/finance.php?tab=reports">
+          <i class="fa-solid fa-file-invoice-dollar"></i><span>Financial Reports</span>
+        </a>
       </div>
 
       <div class="sidebar-group">
-        <span class="sidebar-section-label">Account</span>
-        <a class="sidebar-link" href="#profile"><i class="fa-solid fa-user"></i><span>My Profile</span></a>
-        <a class="sidebar-link sidebar-link--danger" href="../logout.php"><i class="fa-solid fa-right-from-bracket"></i><span>Logout</span></a>
+        <span class="sidebar-section-label">RECORDS</span>
+        <a class="sidebar-link" href="admin/issued.php">
+          <i class="fa-solid fa-file-lines"></i><span>Doc Issuance Log</span>
+        </a>
+        <a class="sidebar-link" href="admin/residents.php">
+          <i class="fa-solid fa-users"></i><span>Resident List</span>
+        </a>
       </div>
+
+      <div class="sidebar-group">
+        <span class="sidebar-section-label">ACCOUNT</span>
+        <a class="sidebar-link" href="admin/profile.php">
+          <i class="fa-solid fa-user"></i><span>My Profile</span>
+        </a>
+        <a class="sidebar-link sidebar-link--danger" href="../logout.php">
+          <i class="fa-solid fa-right-from-bracket"></i><span>Logout</span>
+        </a>
+      </div>
+
     </nav>
 
     <div class="sidebar-completion" aria-label="Profile completion">
@@ -594,50 +336,93 @@ $emergency_numbers = 'PNP 166, Fire 1555, NDRRMC 825-0000';
           <div class="welcome-eyebrow"><?= e($today_line) ?></div>
           <h1><?= e($greeting) ?>, <?= e($first_name) ?></h1>
           <p>Track your barangay requests, announcements, and case updates in one place.</p>
+          <div class="welcome-meta">
+            <span class="role-badge">
+              <i class="fa-solid fa-id-badge"></i> <?= e($role_label) ?>
+            </span>
+            <span class="fiscal-badge">
+              <i class="fa-solid fa-calendar-check"></i> <?= e($fiscal_year) ?>
+            </span>
+          </div>
         </div>
       </section>
 
-      <section class="stat-grid priority-high" aria-label="Request status summary">
-        <a class="status-card status-card--warning" href="#my-requests" data-request-filter="pending">
+      <section class="stat-grid priority-high" aria-label="Financial summary">
+        <!-- 1. Today's Collections -->
+        <div class="status-card status-card--success">
+          <span class="status-card__icon"><i class="fa-solid fa-calendar-day"></i></span>
+          <span class="finance-card__body">
+            <strong class="text-success">₱<?= number_format($today_collections, 2) ?></strong>
+            <small>Today's Collections</small>
+          </span>
+        </div>
+
+        <!-- 2. This Month Collections -->
+        <div class="status-card status-card--success">
           <span class="status-card__icon"><i class="fa-solid fa-sack-dollar"></i></span>
-          <span class="status-card__body">
-            <strong><?= e($pending_count) ?></strong>
-            <small>Total Collections</small>
+          <span class="finance-card__body">
+            <strong class="text-success">₱<?= number_format($month_collections, 2) ?></strong>
+            <small>
+              This Month Collections
+              <span class="badge <?= $mom_positive ? 'bg-success' : 'bg-danger' ?> ms-1">
+                <i class="fa-solid fa-arrow-<?= $mom_positive ? 'up' : 'down' ?>"></i>
+                <?= number_format(abs($mom_change), 1) ?>% vs last month
+              </span>
+            </small>
           </span>
-          <i class="fa-solid fa-arrow-right status-card__arrow"></i>
-        </a>
-        <a class="status-card status-card--success" href="#my-requests" data-request-filter="ready">
+        </div>
+
+        <!-- 3. This Month Expenditures -->
+        <div class="status-card status-card--warning">
           <span class="status-card__icon"><i class="fa-solid fa-money-bill-wave"></i></span>
-          <span class="status-card__body">
-            <strong><?= e($ready_count) ?></strong>
-            <small>Total Expenditures</small>
+          <span class="finance-card__body">
+            <strong class="<?= $exp_class ?>">₱<?= number_format($month_expenditures, 2) ?></strong>
+            <small>This Month Expenditures</small>
           </span>
-          <i class="fa-solid fa-arrow-right status-card__arrow"></i>
-        </a>
-        <a class="status-card status-card--info" href="#my-requests" data-request-filter="all">
+        </div>
+
+        <!-- 4. Net Balance (Month) -->
+        <div class="status-card <?= $net_balance >= 0 ? 'status-card--success' : 'status-card--danger' ?>">
+          <span class="status-card__icon"><i class="fa-solid fa-scale-balanced"></i></span>
+          <span class="finance-card__body">
+            <strong class="<?= $net_class ?>"><?= $net_balance >= 0 ? '+' : '' ?>₱<?= number_format($net_balance, 2) ?></strong>
+            <small>Net Balance (This Month)</small>
+          </span>
+        </div>
+
+        <!-- 5. Budget Utilization -->
+        <div class="status-card status-card--info">
           <span class="status-card__icon"><i class="fa-solid fa-chart-pie"></i></span>
-          <span class="status-card__body">
-            <strong><?= e($total_count) ?></strong>
-            <small>Budget Utilization</small>
+          <span class="finance-card__body">
+            <strong><?= number_format($budget_utilization, 1) ?>%</strong>
+            <small>
+              Budget Utilization (YTD)
+              <div class="progress mt-1" style="height:6px;">
+                <div
+                  class="progress-bar bg-<?= $util_color ?>"
+                  role="progressbar"
+                  style="width: <?= min($budget_utilization, 100) ?>%"
+                  aria-valuenow="<?= $budget_utilization ?>"
+                  aria-valuemin="0"
+                  aria-valuemax="100">
+                </div>
+              </div>
+            </small>
           </span>
-          <i class="fa-solid fa-arrow-right status-card__arrow"></i>
-        </a>
-        <a class="status-card status-card--info" href="#my-requests" data-request-filter="all">
-          <span class="status-card__icon"><i class="fa-solid fa-user-clock"></i></span>
-          <span class="status-card__body">
-            <strong><?= e($total_count) ?></strong>
-            <small>Pending Approvals</small>
-          </span>
-          <i class="fa-solid fa-arrow-right status-card__arrow"></i>
-        </a>
+        </div>
+
       </section>
 
-      <section class="medium-grid priority-medium">
-        <div class="dashboard-panel" id="announcements">
+      <section class="panel-grid-full priority-medium">
+        <div class="dashboard-panel" id="collections-chart">
           <div class="panel-header">
             <div>
-              <h2>Monthly Revenue</h2>
+              <h2>Monthly Collections</h2>
+              <small style="color: var(--text-muted, #888);">Last 6 months — collections vs expenditures</small>
             </div>
+            <a href="admin/finance.php?tab=reports" class="view-all-link">
+              View full report <i class="fa-solid fa-arrow-right"></i>
+            </a>
           </div>
           <div class="announcement-list">
             <canvas id="revenueChart"></canvas>
@@ -646,215 +431,171 @@ $emergency_numbers = 'PNP 166, Fire 1555, NDRRMC 825-0000';
       </section>
 
       <section class="high-grid priority-high">
-        <div class="dashboard-panel quick-panel" id="request-doc">
+
+        <!-- Recent Collections Table -->
+        <div class="dashboard-panel quick-panel" id="recent-collections" style="grid-column: 1 / -1;">
           <div class="panel-header">
             <div>
-              <h2>Recent Transactions</h2>
+              <h2>Recent Collections</h2>
+              <small style="color: var(--text-muted, #888);">Last 8 transactions</small>
             </div>
-            <a class="text-link" href="#my-requests" data-request-filter="all">View all</a>
+            <a class="text-link" href="admin/finance.php?tab=collections">View all collections</a>
           </div>
           <div class="quick-actions">
-            <table>
-                <thead>
-                    <tr>
-                    <th>Date</th>
-                    <th>Description</th>
-                    <th>Type</th>
-                    <th>Amount</th>
-                    <th>Status</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td style="color:var(--text-muted);font-size:11px;">May 24, 2025</td>
-                        <td>Business Permit Fee</td>
-                        <td><span class="badge collection">Collection</span></td>
-                        <td class="amount">₱ 2,500.00</td>
-                        <td><span class="badge completed">Completed</span></td>
-                    </tr>
-
-                    <tr>
-                        <td style="color:var(--text-muted);font-size:11px;">May 23, 2025</td>
-                        <td>Office Supplies</td>
-                        <td><span class="badge expenditure">Expenditure</span></td>
-                        <td class="amount">₱ 1,250.00</td>
-                        <td><span class="badge approved">Approved</span></td>
-                    </tr>
-
-                    <tr>
-                        <td style="color:var(--text-muted);font-size:11px;">May 23, 2025</td>
-                        <td>Document Request Fee</td>
-                        <td><span class="badge collection">Collection</span></td>
-                        <td class="amount">₱ 150.00</td>
-                        <td><span class="badge completed">Completed</span></td>
-                    </tr>
-
-                    <tr>
-                        <td style="color:var(--text-muted);font-size:11px;">May 22, 2025</td>
-                        <td>Fuel Expense</td>
-                        <td><span class="badge expenditure">Expenditure</span></td>
-                        <td class="amount">₱ 3,000.00</td>
-                        <td><span class="badge pending">Pending</span></td>
-                    </tr>
-
-                    <tr>
-                        <td style="color:var(--text-muted);font-size:11px;">May 21, 2025</td>
-                        <td>Certificate Fee</td>
-                        <td><span class="badge collection">Collection</span></td>
-                        <td class="amount">₱ 300.00</td>
-                        <td><span class="badge completed">Completed</span></td>
-                    </tr>
-                </tbody>
+            <table style="width:100%; table-layout:fixed;">
+              <thead>
+                <tr>
+                  <th>No.</th>
+                  <th>Source Type</th>
+                  <th>Amount</th>
+                  <th>Resident Name</th>
+                  <th>Date</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td style="color:var(--text-muted);font-size:11px;">001</td>
+                  <td><span class="badge collection">Business Permit Fee</span></td>
+                  <td class="amount">₱ 2,500.00</td>
+                  <td>Juan dela Cruz</td>
+                  <td style="color:var(--text-muted);font-size:11px;">May 24, 2025</td>
+                  <td><a href="admin/finance.php?tab=collections&id=1" class="btn-view"><i class="fa-solid fa-eye"></i> View</a></td>
+                </tr>
+                <tr>
+                  <td style="color:var(--text-muted);font-size:11px;">002</td>
+                  <td><span class="badge collection">Document Request Fee</span></td>
+                  <td class="amount">₱ 150.00</td>
+                  <td>Maria Santos</td>
+                  <td style="color:var(--text-muted);font-size:11px;">May 23, 2025</td>
+                  <td><a href="admin/finance.php?tab=collections&id=2" class="btn-view"><i class="fa-solid fa-eye"></i> View</a></td>
+                </tr>
+                <tr>
+                  <td style="color:var(--text-muted);font-size:11px;">003</td>
+                  <td><span class="badge collection">Certificate Fee</span></td>
+                  <td class="amount">₱ 300.00</td>
+                  <td>Pedro Reyes</td>
+                  <td style="color:var(--text-muted);font-size:11px;">May 21, 2025</td>
+                  <td><a href="admin/finance.php?tab=collections&id=3" class="btn-view"><i class="fa-solid fa-eye"></i> View</a></td>
+                </tr>
+                <tr>
+                  <td style="color:var(--text-muted);font-size:11px;">004</td>
+                  <td><span class="badge collection">Barangay Clearance</span></td>
+                  <td class="amount">₱ 200.00</td>
+                  <td>Ana Gomez</td>
+                  <td style="color:var(--text-muted);font-size:11px;">May 20, 2025</td>
+                  <td><a href="admin/finance.php?tab=collections&id=4" class="btn-view"><i class="fa-solid fa-eye"></i> View</a></td>
+                </tr>
+                <tr>
+                  <td style="color:var(--text-muted);font-size:11px;">005</td>
+                  <td><span class="badge collection">Business Permit Fee</span></td>
+                  <td class="amount">₱ 2,500.00</td>
+                  <td>Carlos Mendoza</td>
+                  <td style="color:var(--text-muted);font-size:11px;">May 19, 2025</td>
+                  <td><a href="admin/finance.php?tab=collections&id=5" class="btn-view"><i class="fa-solid fa-eye"></i> View</a></td>
+                </tr>
+                <tr>
+                  <td style="color:var(--text-muted);font-size:11px;">006</td>
+                  <td><span class="badge collection">Indigency Certificate</span></td>
+                  <td class="amount">₱ 100.00</td>
+                  <td>Rosa Villanueva</td>
+                  <td style="color:var(--text-muted);font-size:11px;">May 18, 2025</td>
+                  <td><a href="admin/finance.php?tab=collections&id=6" class="btn-view"><i class="fa-solid fa-eye"></i> View</a></td>
+                </tr>
+                <tr>
+                  <td style="color:var(--text-muted);font-size:11px;">007</td>
+                  <td><span class="badge collection">Cedula</span></td>
+                  <td class="amount">₱ 75.00</td>
+                  <td>Jose Bautista</td>
+                  <td style="color:var(--text-muted);font-size:11px;">May 17, 2025</td>
+                  <td><a href="admin/finance.php?tab=collections&id=7" class="btn-view"><i class="fa-solid fa-eye"></i> View</a></td>
+                </tr>
+                <tr>
+                  <td style="color:var(--text-muted);font-size:11px;">008</td>
+                  <td><span class="badge collection">Document Request Fee</span></td>
+                  <td class="amount">₱ 150.00</td>
+                  <td>Luisa Fernandez</td>
+                  <td style="color:var(--text-muted);font-size:11px;">May 16, 2025</td>
+                  <td><a href="admin/finance.php?tab=collections&id=8" class="btn-view"><i class="fa-solid fa-eye"></i> View</a></td>
+                </tr>
+              </tbody>
             </table>
           </div>
         </div>
 
-        <div class="dashboard-panel requests-panel" id="my-requests">
-          <div class="panel-header">
-            <div>
-              <h2>Budget Allocation</h2>
-            </div>
-            <a class="text-link" href="#my-requests" data-request-filter="all">View all</a>
-          </div>
-          <div class="donut-wrap">
-          <div class="donut-canvas-wrap">
-            <canvas id="donutChart"></canvas>
-                <div class="donut-center">
-                    <strong>Total Budget</strong>
-                    <span>₱2,000,000</span>
-                    </div>
-                </div>
-                <div class="donut-legend">
-                    <div class="legend-item">
-                    <div class="legend-label"><div class="legend-dot" style="background:#3b82f6"></div>General Admin</div>
-                    <div><span class="legend-val">₱800,000</span><span class="legend-pct">40%</span></div>
-                    </div>
-                    <div class="legend-item">
-                    <div class="legend-label"><div class="legend-dot" style="background:#22c55e"></div>Public Services</div>
-                    <div><span class="legend-val">₱600,000</span><span class="legend-pct">30%</span></div>
-                    </div>
-                    <div class="legend-item">
-                    <div class="legend-label"><div class="legend-dot" style="background:#e8a020"></div>Social Services</div>
-                    <div><span class="legend-val">₱400,000</span><span class="legend-pct">20%</span></div>
-                    </div>
-                    <div class="legend-item">
-                    <div class="legend-label"><div class="legend-dot" style="background:#8b5cf6"></div>Other Services</div>
-                    <div><span class="legend-val">₱200,000</span><span class="legend-pct">10%</span></div>
-                    </div>
-                </div>
-            </div>
-        </div>
       </section>
 
       <section class="low-grid priority-low">
-        <div class="contact-strip">
-          <div>
-            <span>Office Address</span>
-            <strong><?= e($office_address) ?></strong>
-          </div>
-          <div>
-            <span>Phone / Hotline</span>
-            <strong><?= e($contact_number) ?></strong>
-            <small><?= e($barangay_hotline) ?></small>
-          </div>
-          <div>
-            <span>Office Hours</span>
-            <strong>Monday to Friday, 8:00 AM to 5:00 PM</strong>
-          </div>
-          <div>
-            <span>Emergency Numbers</span>
-            <strong><?= e($emergency_numbers) ?></strong>
-          </div>
-        </div>
-
-        <div class="dashboard-panel faq-panel" id="help">
+        <div class="dashboard-panel" id="pending-expenditure-approvals" style="grid-column: 1 / -1;">
           <div class="panel-header">
             <div>
-              <h2>Help / FAQ</h2>
-              <p>Quick answers for resident portal use.</p>
+              <h2>Pending Expenditure Approvals</h2>
+              <small style="color: var(--text-muted, #888);">Expenditures awaiting Captain approval</small>
             </div>
           </div>
-          <div class="faq-list">
-            <button class="faq-item" type="button" aria-expanded="false">
-              <span>How do I request a document?</span>
-              <i class="fa-solid fa-chevron-down"></i>
-            </button>
-            <div class="faq-answer">
-              <ol>
-                <li>Open Request Document from the sidebar or quick actions.</li>
-                <li>Select the document type and enter the purpose.</li>
-                <li>Review the request details, submit, then track the status in My Requests.</li>
-              </ol>
-              <a class="faq-link" href="request.php">Go to document request</a>
-            </div>
 
-            <button class="faq-item" type="button" aria-expanded="false">
-              <span>How long does processing take?</span>
-              <i class="fa-solid fa-chevron-down"></i>
-            </button>
-            <div class="faq-answer">
-              <?php if ($document_processing_times): ?>
-                <div class="faq-table-wrap">
-                  <table class="faq-table">
-                    <thead>
-                      <tr>
-                        <th>Document Type</th>
-                        <th>Processing Time</th>
-                        <th>Fee</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <?php foreach ($document_processing_times as $document_type): ?>
-                        <tr>
-                          <td><?= e($document_type['name']) ?></td>
-                          <td><?= e((int)$document_type['processing_days']) ?> day<?= (int)$document_type['processing_days'] === 1 ? '' : 's' ?></td>
-                          <td>PHP <?= e(number_format((float)$document_type['fee'], 2)) ?></td>
-                        </tr>
-                      <?php endforeach; ?>
-                    </tbody>
-                  </table>
-                </div>
-              <?php else: ?>
-                <p>Most document requests are processed within 1 to 3 working days after review.</p>
-              <?php endif; ?>
-            </div>
+          <div class="alert-note" style="margin: 0 0 16px 0; padding: 10px 16px; background: rgba(234,179,8,0.1); border-left: 4px solid #eab308; border-radius: 6px; color: #eab308; font-size: 13px;">
+            <i class="fa-solid fa-circle-info"></i>
+            Expenditures over ₱5,000 require Captain approval before disbursement.
+          </div>
 
-            <button class="faq-item" type="button" aria-expanded="false">
-              <span>What IDs are accepted?</span>
-              <i class="fa-solid fa-chevron-down"></i>
-            </button>
-            <div class="faq-answer">
-              <ul class="faq-id-list">
-                <li>Philippine National ID</li>
-                <li>Passport</li>
-                <li>Driver's License</li>
-                <li>UMID / SSS ID</li>
-                <li>GSIS ID</li>
-                <li>PRC ID</li>
-                <li>Voter's ID</li>
-                <li>Postal ID</li>
-                <li>PhilHealth ID</li>
-                <li>Senior Citizen or PWD ID</li>
-              </ul>
-            </div>
+          <div style="display:block;">
+            <table style="width:100%; table-layout:fixed;">
+              <thead>
+                <tr>
+                  <th>Category</th>
+                  <th>Amount</th>
+                  <th>Description</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <?php if (!empty($pending_expenditures)): ?>
+                  <?php foreach ($pending_expenditures as $expenditure): ?>
+                    <tr>
+                      <td><?= e($expenditure['category']) ?></td>
+                      <td class="amount">₱ <?= e(number_format((float)$expenditure['amount'], 2)) ?></td>
+                      <td><?= e($expenditure['description']) ?></td>
+                      <td><span class="badge pending">Pending</span></td>
+                    </tr>
+                  <?php endforeach; ?>
+                <?php else: ?>
+                  <tr>
+                    <td colspan="4" style="text-align:center; color:var(--text-muted, #888); padding: 24px 0;">
+                      <i class="fa-solid fa-check-circle" style="margin-right:6px;"></i>No pending expenditures for approval.
+                    </td>
+                  </tr>
+                <?php endif; ?>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
 
-            <button class="faq-item" type="button" aria-expanded="false">
-              <span>How do I file a complaint?</span>
-              <i class="fa-solid fa-chevron-down"></i>
-            </button>
-            <div class="faq-answer">
-              <p>Prepare the incident details, date, location, and names of involved persons if known. Submit the complaint form and wait for barangay staff to review the case.</p>
-              <a class="faq-link" href="blotter.php">File a complaint</a>
+      <section id="quick-actions-section" style="padding: 16px 0;">
+        <div class="dashboard-panel" style="grid-column: 1 / -1;">
+          <div class="panel-header">
+            <div>
+              <h2>Quick Actions</h2>
             </div>
-
-            <button class="faq-item" type="button" aria-expanded="false">
-              <span>How do I update my information?</span>
-              <i class="fa-solid fa-chevron-down"></i>
-            </button>
-            <div class="faq-answer">
-              <p>Open your profile page to update missing or outdated information. Some verified details may require staff review.</p>
-              <a class="faq-link" href="profile.php">Update my profile</a>
-            </div>
+          </div>
+          <div style="display: flex; gap: 16px; flex-wrap: wrap; padding: 8px 0;">
+            <a href="admin/finance.php?tab=record" class="quick-action-btn">
+              <i class="fa-solid fa-money-bill-wave"></i>
+              <span>Record Collection</span>
+            </a>
+            <a href="admin/finance.php?tab=add-exp" class="quick-action-btn">
+              <i class="fa-solid fa-file-invoice-dollar"></i>
+              <span>Add Expenditure</span>
+            </a>
+            <a href="admin/finance.php?tab=reports" class="quick-action-btn">
+              <i class="fa-solid fa-chart-bar"></i>
+              <span>View Reports</span>
+            </a>
+            <a href="admin/finance.php?tab=budget" class="quick-action-btn">
+              <i class="fa-solid fa-wallet"></i>
+              <span>Budget Overview</span>
+            </a>
           </div>
         </div>
       </section>
@@ -865,46 +606,93 @@ $emergency_numbers = 'PNP 166, Fire 1555, NDRRMC 825-0000';
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 
   <script>
-    // Revenue Line Chart
-    const revCtx = document.getElementById('revenueChart').getContext('2d');
-    new Chart(revCtx, {
-    type: 'line',
-    data: {
-        labels: ['May 1','May 8','May 15','May 22','May 29'],
-        datasets: [{
-        label: 'Revenue',
-        data: [80000, 130000, 160000, 145000, 175000],
-        borderColor: '#e8a020',
-        backgroundColor: 'rgba(232,160,32,0.08)',
-        borderWidth: 2.5,
-        pointBackgroundColor: '#e8a020',
-        pointRadius: 4,
-        pointHoverRadius: 6,
-        tension: 0.4,
-        fill: true,
-        }]
-    },
-    options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display: false }, tooltip: {
-        backgroundColor: '#1a2236',
-        titleColor: '#fff',
-        bodyColor: '#e8a020',
-        padding: 10,
-        callbacks: {
-            label: ctx => ' ₱ ' + ctx.raw.toLocaleString()
+    (function () {
+      // --- STATIC DATA (replace with PHP-injected values later) ---
+      const labels        = ['January', 'February', 'March', 'April', 'May', 'June'];
+      const collections   = [82000, 95000, 110000, 143000, 162800, 187320];
+      const expenditures  = [70000, 88000, 105000, 120000, 130000, 134200];
+
+      const ctx = document.getElementById('revenueChart').getContext('2d');
+
+      new Chart(ctx, {
+        data: {
+          labels,
+          datasets: [
+            {
+              // Bar — Collections
+              type: 'bar',
+              label: 'Collections',
+              data: collections,
+              backgroundColor: 'rgba(234, 179, 8, 0.25)',
+              borderColor:     'rgba(234, 179, 8, 0.9)',
+              borderWidth: 2,
+              borderRadius: 6,
+              order: 2,
+            },
+            {
+              // Line — Expenditures
+              type: 'line',
+              label: 'Expenditures',
+              data: expenditures,
+              borderColor:     'rgba(239, 68, 68, 0.9)',
+              backgroundColor: 'rgba(239, 68, 68, 0.08)',
+              borderWidth: 2,
+              pointBackgroundColor: 'rgba(239, 68, 68, 1)',
+              pointRadius: 4,
+              tension: 0.4,
+              fill: true,
+              order: 1,
+            },
+            {
+              // Line — Collections trend
+              type: 'line',
+              label: 'Collections Trend',
+              data: collections,
+              borderColor:     'rgba(234, 179, 8, 1)',
+              backgroundColor: 'transparent',
+              borderWidth: 2,
+              borderDash: [5, 4],
+              pointBackgroundColor: 'rgba(234, 179, 8, 1)',
+              pointRadius: 4,
+              tension: 0.4,
+              fill: false,
+              order: 0,
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: {
+              labels: {
+                color: '#ccc',
+                font: { size: 12 },
+                boxWidth: 14,
+              }
+            },
+            tooltip: {
+              callbacks: {
+                label: ctx => ' ₱' + ctx.parsed.y.toLocaleString()
+              }
+            }
+          },
+          scales: {
+            x: {
+              ticks: { color: '#aaa' },
+              grid:  { color: 'rgba(255,255,255,0.05)' }
+            },
+            y: {
+              ticks: {
+                color: '#aaa',
+                callback: val => '₱' + (val / 1000) + 'K'
+              },
+              grid: { color: 'rgba(255,255,255,0.07)' }
+            }
+          }
         }
-        }},
-        scales: {
-        x: { grid: { display: false }, ticks: { font: { size: 10 }, color: '#6b7a99' } },
-        y: {
-            grid: { color: 'rgba(0,0,0,0.04)' },
-            ticks: { font: { size: 10 }, color: '#6b7a99', callback: v => v >= 1000 ? (v/1000)+'K' : v }
-        }
-        }
-    }
-    });
+      });
+    })();
 
     // Donut Chart
     const doCtx = document.getElementById('donutChart').getContext('2d');
