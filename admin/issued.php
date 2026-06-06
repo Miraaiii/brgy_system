@@ -1,7 +1,7 @@
 <?php
 require_once __DIR__ . '/includes/admin_layout.php';
 
-$user = adm_require_secretary($conn);
+$user = adm_require_admin($conn, ['captain', 'secretary']);
 $q = trim((string)($_GET['q'] ?? ''));
 $doc_type_id = (int)($_GET['doc_type_id'] ?? 0);
 $from = trim((string)($_GET['from'] ?? ''));

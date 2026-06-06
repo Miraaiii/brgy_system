@@ -1,7 +1,7 @@
 <?php
 require_once __DIR__ . '/includes/admin_layout.php';
 
-$user = adm_require_secretary($conn);
+$user = adm_require_admin($conn, ['captain', 'secretary']);
 
 adm_page_start('Events Calendar', 'events', $user, 'events-page');
 adm_page_header('Sprint 3', 'Events Calendar', 'Calendar management is reserved for the next sprint because the current schema does not include an events table.');

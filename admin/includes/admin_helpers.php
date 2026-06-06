@@ -136,7 +136,44 @@ function adm_pull_flash() {
     return $flash;
 }
 
-function adm_require_secretary($conn) {
+function adm_admin_roles() {
+    return ['captain', 'secretary', 'treasurer', 'kagawad', 'sk_chair', 'sk_kagawad'];
+}
+
+function adm_role_label($role) {
+    $role = strtolower(trim((string)$role));
+    $labels = [
+        'captain' => 'Punong Barangay',
+        'secretary' => 'Barangay Secretary',
+        'treasurer' => 'Barangay Treasurer',
+        'kagawad' => 'Barangay Kagawad',
+        'sk_chair' => 'SK Chairperson',
+        'sk_kagawad' => 'SK Kagawad',
+        'resident' => 'Resident',
+    ];
+
+    return $labels[$role] ?? ucwords(str_replace('_', ' ', $role ?: 'Official'));
+}
+
+function adm_role_badge_class($role) {
+    $role = strtolower(trim((string)$role));
+    $classes = [
+        'captain' => 'warning',
+        'secretary' => 'processing',
+        'treasurer' => 'approved',
+        'kagawad' => 'approval',
+        'sk_chair' => 'approval',
+        'sk_kagawad' => 'approval',
+    ];
+
+    return $classes[$role] ?? 'neutral';
+}
+
+function adm_is_captain($user) {
+    return strtolower(trim((string)($user['role'] ?? ''))) === 'captain';
+}
+
+function adm_require_admin($conn, array $allowed_roles = []) {
     if (empty($_SESSION['user_id'])) {
         header('Location: login.php');
         exit();
@@ -161,13 +198,42 @@ function adm_require_secretary($conn) {
 
     $role = strtolower(trim((string)($user['role'] ?? '')));
     $status = strtolower(trim((string)($user['status'] ?? 'active')));
-    if ($role !== 'secretary' || $status !== 'active') {
+    $admin_roles = adm_admin_roles();
+    if (!in_array($role, $admin_roles, true) || $status !== 'active') {
         header('Location: ../logout.php');
+        exit();
+    }
+
+    $allowed_roles = $allowed_roles ?: $admin_roles;
+    $allowed_roles = array_map(fn($item) => strtolower(trim((string)$item)), $allowed_roles);
+    if (!in_array($role, $allowed_roles, true)) {
+        adm_set_flash('danger', 'Access denied. Your official role cannot open that page.');
+        header('Location: dashboard.php');
         exit();
     }
 
     $_SESSION['role'] = $role;
     $_SESSION['email'] = $user['email'];
+
+    return $user;
+}
+
+function adm_require_secretary($conn) {
+    return adm_require_admin($conn, ['secretary']);
+}
+
+function adm_require_captain($conn) {
+    if (empty($_SESSION['user_id'])) {
+        header('Location: login.php');
+        exit();
+    }
+
+    $user = adm_require_admin($conn);
+    if (!adm_is_captain($user)) {
+        adm_set_flash('danger', 'Access denied. This page is reserved for the Punong Barangay.');
+        header('Location: dashboard.php');
+        exit();
+    }
 
     return $user;
 }
@@ -271,6 +337,12 @@ function adm_status_label($status) {
         'closed' => 'Closed',
         'published' => 'Published',
         'draft' => 'Draft',
+        'planning' => 'Planning',
+        'ongoing' => 'Ongoing',
+        'completed' => 'Completed',
+        'on_hold' => 'On Hold',
+        'scheduled' => 'Scheduled',
+        'held' => 'Held',
     ];
 
     return $labels[$status] ?? ucwords(str_replace('_', ' ', $status ?: 'Unknown'));
@@ -295,6 +367,12 @@ function adm_status_class($status) {
         'settled' => 'approved',
         'closed' => 'neutral',
         'escalated' => 'danger',
+        'planning' => 'pending',
+        'ongoing' => 'processing',
+        'completed' => 'approved',
+        'on_hold' => 'neutral',
+        'scheduled' => 'pending',
+        'held' => 'approved',
     ];
 
     return $classes[$status] ?? 'neutral';
@@ -1007,7 +1085,468 @@ function adm_archive_resident($conn, $resident_id, $secretary_id, $status) {
     return [true, 'Resident status updated.'];
 }
 
-function adm_handle_request_action($conn, $action, $request_id, $user_id, $reason = '') {
+function adm_days_waiting($value) {
+    $time = strtotime((string)$value);
+    if (!$time) {
+        return 0;
+    }
+
+    return max(0, (int)floor((time() - $time) / 86400));
+}
+
+function adm_generate_or_number($conn) {
+    for ($i = 0; $i < 12; $i++) {
+        $candidate = 'OR-' . date('Y') . '-' . str_pad((string)random_int(1, 99999), 5, '0', STR_PAD_LEFT);
+        $exists = adm_table_exists($conn, 'collections')
+            ? adm_scalar($conn, 'SELECT COUNT(*) FROM collections WHERE or_number = ?', 's', [$candidate])
+            : 0;
+        if ($exists === 0) {
+            return $candidate;
+        }
+    }
+
+    return 'OR-' . date('Y') . '-' . strtoupper(bin2hex(random_bytes(3)));
+}
+
+function adm_create_collection_for_request($conn, $request_id, $collected_by) {
+    if (!adm_table_exists($conn, 'collections')) {
+        return true;
+    }
+
+    $request = adm_fetch_one(
+        $conn,
+        'SELECT dr.id, dr.resident_id, dr.reference_no, dt.name AS document_name, dt.fee
+         FROM document_requests dr
+         INNER JOIN document_types dt ON dt.id = dr.doc_type_id
+         WHERE dr.id = ?
+         LIMIT 1',
+        'i',
+        [(int)$request_id]
+    );
+    if (!$request || (float)$request['fee'] <= 0) {
+        return true;
+    }
+
+    $existing = adm_fetch_one(
+        $conn,
+        'SELECT id FROM collections WHERE request_id = ? LIMIT 1',
+        'i',
+        [(int)$request_id]
+    );
+    if ($existing) {
+        return true;
+    }
+
+    $or_number = adm_generate_or_number($conn);
+    $description = $request['document_name'] . ' fee for ' . $request['reference_no'];
+    $source_type = 'document_fee';
+    $amount = (float)$request['fee'];
+    $resident_id = (int)$request['resident_id'];
+    $request_id = (int)$request_id;
+    $collected_by = (int)$collected_by;
+
+    $stmt = $conn->prepare(
+        'INSERT INTO collections (or_number, request_id, resident_id, source_type, amount, description, collected_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?)'
+    );
+    if (!$stmt) {
+        return false;
+    }
+
+    $stmt->bind_param('siisdsi', $or_number, $request_id, $resident_id, $source_type, $amount, $description, $collected_by);
+    $ok = $stmt->execute();
+    $stmt->close();
+
+    return $ok;
+}
+
+function adm_notify_secretaries_request_returned($conn, $request_id, $reason) {
+    $request = adm_fetch_one(
+        $conn,
+        'SELECT reference_no FROM document_requests WHERE id = ? LIMIT 1',
+        'i',
+        [(int)$request_id]
+    );
+    if (!$request) {
+        return;
+    }
+
+    $secretaries = adm_fetch_all($conn, "SELECT id, email FROM users WHERE role = 'secretary' AND status = 'active'");
+    foreach ($secretaries as $secretary) {
+        adm_create_notification(
+            $conn,
+            (int)$secretary['id'],
+            'request_returned',
+            'Request returned by Captain',
+            $request['reference_no'] . ' was sent back for processing. Reason: ' . $reason,
+            'admin/request-detail.php?id=' . (int)$request_id,
+            $secretary['email'] ?? null
+        );
+    }
+}
+
+function adm_captain_approve_request($conn, $request_id, $captain_id) {
+    $request = adm_fetch_one(
+        $conn,
+        'SELECT id, status FROM document_requests WHERE id = ? LIMIT 1',
+        'i',
+        [(int)$request_id]
+    );
+    if (!$request) {
+        return [false, 'Request not found.'];
+    }
+    if (strtolower((string)$request['status']) !== 'for_approval') {
+        return [false, 'Only requests awaiting Captain approval can be approved.'];
+    }
+    if (!adm_table_exists($conn, 'issued_documents')) {
+        return [false, 'Issued documents table is not installed.'];
+    }
+
+    $conn->begin_transaction();
+    try {
+        $stmt = $conn->prepare(
+            "UPDATE document_requests
+             SET status = 'approved',
+                 approved_by = ?,
+                 approved_at = NOW(),
+                 updated_at = NOW()
+             WHERE id = ? AND status = 'for_approval'"
+        );
+        if (!$stmt) {
+            throw new Exception('Unable to prepare approval update.');
+        }
+        $request_id = (int)$request_id;
+        $captain_id = (int)$captain_id;
+        $stmt->bind_param('ii', $captain_id, $request_id);
+        $stmt->execute();
+        $updated = $stmt->affected_rows > 0;
+        $stmt->close();
+        if (!$updated) {
+            throw new Exception('Request was already updated.');
+        }
+        if (!adm_create_issued_document($conn, $request_id, $captain_id)) {
+            throw new Exception('Unable to create issued document record.');
+        }
+        if (!adm_create_collection_for_request($conn, $request_id, $captain_id)) {
+            throw new Exception('Unable to create collection record.');
+        }
+        $conn->commit();
+    } catch (Throwable $e) {
+        $conn->rollback();
+        return [false, $e->getMessage()];
+    }
+
+    adm_notify_request_status($conn, $request_id, 'approved');
+    adm_log_activity($conn, $captain_id, 'doc_approved', 'document_requests', $request_id, ['status' => 'approved']);
+    return [true, 'Request approved, signed, and issued.'];
+}
+
+function adm_captain_return_request($conn, $request_id, $captain_id, $reason) {
+    $reason = trim((string)$reason);
+    if ($reason === '') {
+        return [false, 'A send-back reason is required.'];
+    }
+
+    $request = adm_fetch_one(
+        $conn,
+        'SELECT id, status FROM document_requests WHERE id = ? LIMIT 1',
+        'i',
+        [(int)$request_id]
+    );
+    if (!$request) {
+        return [false, 'Request not found.'];
+    }
+    if (strtolower((string)$request['status']) !== 'for_approval') {
+        return [false, 'Only requests awaiting Captain approval can be sent back.'];
+    }
+
+    $stmt = $conn->prepare(
+        "UPDATE document_requests
+         SET status = 'processing',
+             remarks = ?,
+             updated_at = NOW()
+         WHERE id = ? AND status = 'for_approval'"
+    );
+    if (!$stmt) {
+        return [false, 'Unable to prepare send-back update.'];
+    }
+
+    $request_id = (int)$request_id;
+    $captain_id = (int)$captain_id;
+    $stmt->bind_param('si', $reason, $request_id);
+    $stmt->execute();
+    $updated = $stmt->affected_rows > 0;
+    $stmt->close();
+
+    if (!$updated) {
+        return [false, 'Request was already updated.'];
+    }
+
+    adm_notify_secretaries_request_returned($conn, $request_id, $reason);
+    adm_log_activity($conn, $captain_id, 'doc_sent_back', 'document_requests', $request_id, ['status' => 'processing', 'reason' => $reason]);
+    return [true, 'Request sent back to the Secretary.'];
+}
+
+function adm_ensure_expenditure_approval_columns($conn) {
+    if (!adm_table_exists($conn, 'expenditures')) {
+        return false;
+    }
+
+    if (!adm_column_exists($conn, 'expenditures', 'approval_status')) {
+        @$conn->query("ALTER TABLE expenditures ADD COLUMN approval_status ENUM('pending','approved','rejected') NOT NULL DEFAULT 'pending' AFTER supporting_doc_path");
+    }
+    if (!adm_column_exists($conn, 'expenditures', 'approval_notes')) {
+        @$conn->query("ALTER TABLE expenditures ADD COLUMN approval_notes TEXT NULL DEFAULT NULL AFTER approval_status");
+    }
+    if (!adm_column_exists($conn, 'expenditures', 'approved_at')) {
+        @$conn->query("ALTER TABLE expenditures ADD COLUMN approved_at TIMESTAMP NULL DEFAULT NULL AFTER approved_by");
+    }
+
+    return true;
+}
+
+function adm_notify_expenditure_recorder($conn, $expenditure_id, $status, $reason = '') {
+    $row = adm_fetch_one(
+        $conn,
+        'SELECT e.recorded_by, e.amount, e.category, u.email
+         FROM expenditures e
+         LEFT JOIN users u ON u.id = e.recorded_by
+         WHERE e.id = ?
+         LIMIT 1',
+        'i',
+        [(int)$expenditure_id]
+    );
+    if (!$row || empty($row['recorded_by'])) {
+        return;
+    }
+
+    $approved = $status === 'approved';
+    $message = 'Expenditure for ' . $row['category'] . ' amounting to PHP ' . number_format((float)$row['amount'], 2)
+        . ' was ' . ($approved ? 'approved.' : 'rejected. Reason: ' . ($reason !== '' ? $reason : 'No reason provided.'));
+
+    adm_create_notification(
+        $conn,
+        (int)$row['recorded_by'],
+        'expenditure_' . $status,
+        'Expenditure ' . adm_status_label($status),
+        $message,
+        'admin/finance.php?tab=expenditures',
+        $row['email'] ?? null
+    );
+}
+
+function adm_approve_expenditure($conn, $expenditure_id, $captain_id) {
+    adm_ensure_expenditure_approval_columns($conn);
+
+    $expenditure = adm_fetch_one(
+        $conn,
+        'SELECT id, approval_status FROM expenditures WHERE id = ? LIMIT 1',
+        'i',
+        [(int)$expenditure_id]
+    );
+    if (!$expenditure) {
+        return [false, 'Expenditure not found.'];
+    }
+    if (strtolower((string)$expenditure['approval_status']) === 'approved') {
+        return [false, 'This expenditure is already approved.'];
+    }
+
+    $stmt = $conn->prepare(
+        "UPDATE expenditures
+         SET approval_status = 'approved',
+             approval_notes = NULL,
+             approved_by = ?,
+             approved_at = NOW()
+         WHERE id = ?"
+    );
+    if (!$stmt) {
+        return [false, 'Unable to prepare expenditure approval.'];
+    }
+
+    $expenditure_id = (int)$expenditure_id;
+    $captain_id = (int)$captain_id;
+    $stmt->bind_param('ii', $captain_id, $expenditure_id);
+    $stmt->execute();
+    $ok = $stmt->affected_rows >= 0;
+    $stmt->close();
+
+    if (!$ok) {
+        return [false, 'Unable to approve expenditure.'];
+    }
+
+    adm_notify_expenditure_recorder($conn, $expenditure_id, 'approved');
+    adm_log_activity($conn, $captain_id, 'expenditure_approved', 'expenditures', $expenditure_id, ['approval_status' => 'approved']);
+    return [true, 'Expenditure approved.'];
+}
+
+function adm_reject_expenditure($conn, $expenditure_id, $captain_id, $reason) {
+    adm_ensure_expenditure_approval_columns($conn);
+    $reason = trim((string)$reason);
+    if ($reason === '') {
+        return [false, 'A rejection reason is required.'];
+    }
+
+    $expenditure = adm_fetch_one(
+        $conn,
+        'SELECT id, approval_status FROM expenditures WHERE id = ? LIMIT 1',
+        'i',
+        [(int)$expenditure_id]
+    );
+    if (!$expenditure) {
+        return [false, 'Expenditure not found.'];
+    }
+
+    $stmt = $conn->prepare(
+        "UPDATE expenditures
+         SET approval_status = 'rejected',
+             approval_notes = ?,
+             approved_by = ?,
+             approved_at = NOW()
+         WHERE id = ?"
+    );
+    if (!$stmt) {
+        return [false, 'Unable to prepare expenditure rejection.'];
+    }
+
+    $expenditure_id = (int)$expenditure_id;
+    $captain_id = (int)$captain_id;
+    $stmt->bind_param('sii', $reason, $captain_id, $expenditure_id);
+    $stmt->execute();
+    $ok = $stmt->affected_rows >= 0;
+    $stmt->close();
+
+    if (!$ok) {
+        return [false, 'Unable to reject expenditure.'];
+    }
+
+    adm_notify_expenditure_recorder($conn, $expenditure_id, 'rejected', $reason);
+    adm_log_activity($conn, $captain_id, 'expenditure_rejected', 'expenditures', $expenditure_id, ['approval_status' => 'rejected', 'reason' => $reason]);
+    return [true, 'Expenditure rejected and returned to the Treasurer.'];
+}
+
+function adm_ensure_settings_tables($conn) {
+    @$conn->query(
+        "CREATE TABLE IF NOT EXISTS system_settings (
+            setting_key VARCHAR(80) NOT NULL,
+            setting_value TEXT NULL DEFAULT NULL,
+            updated_by INT UNSIGNED NULL DEFAULT NULL,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (setting_key)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+
+    @$conn->query(
+        "CREATE TABLE IF NOT EXISTS role_permissions (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            role VARCHAR(40) NOT NULL,
+            module VARCHAR(80) NOT NULL,
+            can_read TINYINT(1) NOT NULL DEFAULT 0,
+            can_write TINYINT(1) NOT NULL DEFAULT 0,
+            can_delete TINYINT(1) NOT NULL DEFAULT 0,
+            updated_by INT UNSIGNED NULL DEFAULT NULL,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY uq_role_module (role, module)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+}
+
+function adm_get_settings($conn, array $keys) {
+    if (!$keys) {
+        return array_fill_keys($keys, '');
+    }
+
+    $placeholders = implode(',', array_fill(0, count($keys), '?'));
+    $types = str_repeat('s', count($keys));
+    $rows = adm_fetch_all(
+        $conn,
+        "SELECT setting_key, setting_value FROM system_settings WHERE setting_key IN ({$placeholders})",
+        $types,
+        $keys
+    );
+    $settings = array_fill_keys($keys, '');
+    foreach ($rows as $row) {
+        $settings[$row['setting_key']] = (string)($row['setting_value'] ?? '');
+    }
+
+    return $settings;
+}
+
+function adm_save_setting($conn, $key, $value, $user_id) {
+    adm_ensure_settings_tables($conn);
+    $stmt = $conn->prepare(
+        'INSERT INTO system_settings (setting_key, setting_value, updated_by)
+         VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_by = VALUES(updated_by)'
+    );
+    if (!$stmt) {
+        return false;
+    }
+
+    $key = (string)$key;
+    $value = (string)$value;
+    $user_id = (int)$user_id;
+    $stmt->bind_param('ssi', $key, $value, $user_id);
+    $ok = $stmt->execute();
+    $stmt->close();
+
+    return $ok;
+}
+
+function adm_ensure_project_tables($conn) {
+    @$conn->query(
+        "CREATE TABLE IF NOT EXISTS projects (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            title VARCHAR(160) NOT NULL,
+            committee VARCHAR(100) NOT NULL,
+            assigned_user_id INT UNSIGNED NULL DEFAULT NULL,
+            category VARCHAR(60) NOT NULL,
+            description TEXT NOT NULL,
+            status ENUM('planning','ongoing','completed','on_hold') NOT NULL DEFAULT 'planning',
+            start_date DATE NOT NULL,
+            target_end_date DATE NOT NULL,
+            estimated_budget DECIMAL(12,2) NULL DEFAULT NULL,
+            progress_percent TINYINT UNSIGNED NOT NULL DEFAULT 0,
+            archived_at TIMESTAMP NULL DEFAULT NULL,
+            created_by INT UNSIGNED NOT NULL,
+            updated_by INT UNSIGNED NULL DEFAULT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_projects_committee (committee),
+            KEY idx_projects_status (status),
+            KEY idx_projects_assigned (assigned_user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+
+    @$conn->query(
+        "CREATE TABLE IF NOT EXISTS project_photos (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            project_id INT UNSIGNED NOT NULL,
+            file_path VARCHAR(255) NOT NULL,
+            original_name VARCHAR(200) NOT NULL,
+            uploaded_by INT UNSIGNED NULL DEFAULT NULL,
+            uploaded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_project_photos_project (project_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+}
+
+function adm_user_role_values($conn) {
+    $row = adm_fetch_one($conn, "SHOW COLUMNS FROM users LIKE 'role'");
+    if (!$row || empty($row['Type'])) {
+        return ['captain', 'secretary', 'treasurer', 'kagawad'];
+    }
+
+    preg_match_all("/'([^']+)'/", (string)$row['Type'], $matches);
+    $roles = $matches[1] ?? [];
+    $roles = array_values(array_filter($roles, fn($role) => $role !== 'resident'));
+    return $roles ?: ['captain', 'secretary', 'treasurer', 'kagawad'];
+}
+
+function adm_handle_request_action($conn, $action, $request_id, $user_id, $reason = '', $role = null) {
+    $role = strtolower(trim((string)($role ?? ($_SESSION['role'] ?? ''))));
     switch ($action) {
         case 'process_request':
             return adm_process_document_request($conn, $request_id, $user_id);
@@ -1019,6 +1558,16 @@ function adm_handle_request_action($conn, $action, $request_id, $user_id, $reaso
             return adm_reject_document_request($conn, $request_id, $user_id, $reason);
         case 'release_request':
             return adm_release_document_request($conn, $request_id, $user_id);
+        case 'captain_approve_request':
+            if ($role !== 'captain') {
+                return [false, 'Only the Punong Barangay can approve and sign this request.'];
+            }
+            return adm_captain_approve_request($conn, $request_id, $user_id);
+        case 'captain_return_request':
+            if ($role !== 'captain') {
+                return [false, 'Only the Punong Barangay can send this request back.'];
+            }
+            return adm_captain_return_request($conn, $request_id, $user_id, $reason);
     }
 
     return [false, 'Unknown action.'];

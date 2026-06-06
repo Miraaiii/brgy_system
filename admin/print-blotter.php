@@ -1,7 +1,7 @@
 <?php
 require_once __DIR__ . '/includes/admin_helpers.php';
 
-$user = adm_require_secretary($conn);
+$user = adm_require_admin($conn, ['captain', 'secretary', 'kagawad']);
 $case_id = (int)($_GET['id'] ?? 0);
 $case = null;
 

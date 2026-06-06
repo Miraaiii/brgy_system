@@ -1,8 +1,10 @@
 <?php
 require_once __DIR__ . '/includes/admin_layout.php';
 
-$user = adm_require_secretary($conn);
+$user = adm_require_admin($conn, ['captain', 'secretary']);
 $csrf = adm_action_token();
+$role = strtolower(trim((string)($user['role'] ?? '')));
+$is_captain = $role === 'captain';
 $request_id = (int)($_GET['id'] ?? ($_POST['request_id'] ?? 0));
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -14,7 +16,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             (string)($_POST['action'] ?? ''),
             (int)($_POST['request_id'] ?? 0),
             (int)$user['id'],
-            (string)($_POST['reason'] ?? '')
+            (string)($_POST['reason'] ?? ''),
+            $role
         );
         adm_set_flash($ok ? 'success' : 'danger', $message);
     }
@@ -115,6 +118,9 @@ adm_page_start('Request Detail', 'requests', $user, 'request-detail-page');
     }
     $needs_approval = (int)$request['requires_approval'] === 1;
     $actions = '<a class="btn" href="requests.php"><i class="fa-solid fa-arrow-left"></i> Back</a>';
+    if ($is_captain && $status === 'for_approval') {
+        $actions .= ' <a class="btn" href="print-document.php?id=' . adm_e($request_id) . '&preview=1" target="_blank" rel="noopener"><i class="fa-solid fa-file-pdf"></i> Preview PDF</a>';
+    }
     if (in_array($status, ['approved', 'released'], true)) {
         $actions .= ' <a class="btn btn--primary" href="print-document.php?id=' . adm_e($request_id) . '" target="_blank" rel="noopener"><i class="fa-solid fa-print"></i> Print document</a>';
     }
@@ -240,6 +246,35 @@ adm_page_start('Request Detail', 'requests', $user, 'request-detail-page');
         </dl>
       </section>
 
+      <?php if ($is_captain && $status === 'for_approval'): ?>
+        <section class="detail-panel no-print">
+          <h2>Captain Actions</h2>
+          <div class="action-row" style="margin-top: 12px;">
+            <form method="post" data-disable-on-submit>
+              <input type="hidden" name="csrf_token" value="<?= adm_e($csrf) ?>">
+              <input type="hidden" name="action" value="captain_approve_request">
+              <input type="hidden" name="request_id" value="<?= adm_e($request_id) ?>">
+              <button class="btn btn--success" type="submit"><i class="fa-solid fa-signature"></i> Approve &amp; Sign</button>
+            </form>
+          </div>
+
+          <details class="inline-reject" style="margin-top: 12px;">
+            <summary class="btn btn--danger"><i class="fa-solid fa-reply"></i> Send back to Secretary</summary>
+            <form class="inline-reject__body" method="post" data-disable-on-submit>
+              <input type="hidden" name="csrf_token" value="<?= adm_e($csrf) ?>">
+              <input type="hidden" name="action" value="captain_return_request">
+              <input type="hidden" name="request_id" value="<?= adm_e($request_id) ?>">
+              <div class="form-field">
+                <label for="sendBackReason">Reason</label>
+                <textarea id="sendBackReason" name="reason" required></textarea>
+              </div>
+              <button class="btn btn--danger" type="submit">Return for processing</button>
+            </form>
+          </details>
+        </section>
+      <?php endif; ?>
+
+      <?php if (!$is_captain): ?>
       <section class="detail-panel no-print">
         <h2>Secretary Actions</h2>
         <div class="action-row" style="margin-top: 12px;">
@@ -296,6 +331,7 @@ adm_page_start('Request Detail', 'requests', $user, 'request-detail-page');
           </details>
         <?php endif; ?>
       </section>
+      <?php endif; ?>
     </aside>
   </section>
 <?php endif; ?>

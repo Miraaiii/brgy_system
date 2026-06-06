@@ -1,7 +1,7 @@
 <?php
 require_once __DIR__ . '/includes/admin_layout.php';
 
-$user = adm_require_secretary($conn);
+$user = adm_require_admin($conn, ['captain', 'secretary']);
 $csrf = adm_action_token();
 $resident_id = (int)($_GET['id'] ?? 0);
 $is_edit = $resident_id > 0;

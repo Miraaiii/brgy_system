@@ -1,9 +1,13 @@
 <?php
 require_once __DIR__ . '/includes/admin_helpers.php';
 
-$user = adm_require_secretary($conn);
+$user = adm_require_admin($conn, ['captain', 'secretary']);
+$role = strtolower(trim((string)($user['role'] ?? '')));
+$is_captain = $role === 'captain';
+$is_preview = isset($_GET['preview']) && $_GET['preview'] === '1';
 $request_id = (int)($_GET['id'] ?? 0);
 $request = null;
+$settings = adm_get_settings($conn, ['barangay_name', 'municipality', 'province', 'barangay_seal', 'captain_signature']);
 
 if ($request_id > 0 && adm_table_exists($conn, 'document_requests') && adm_table_exists($conn, 'document_types') && adm_table_exists($conn, 'residents')) {
     $issued_select = adm_table_exists($conn, 'issued_documents') ? ', issued.doc_number, issued.qr_token, issued.issued_at' : ', NULL AS doc_number, NULL AS qr_token, NULL AS issued_at';
@@ -14,12 +18,14 @@ if ($request_id > 0 && adm_table_exists($conn, 'document_requests') && adm_table
                 dt.name AS document_name,
                 r.first_name, r.middle_name, r.last_name, r.birth_date, r.civil_status, r.sex,
                 h.house_number, h.street, h.purok,
+                processor.fullname AS processed_by_name,
                 approver.fullname AS approved_by_name
                 {$issued_select}
          FROM document_requests dr
          INNER JOIN document_types dt ON dt.id = dr.doc_type_id
          INNER JOIN residents r ON r.id = dr.resident_id
          LEFT JOIN households h ON h.id = r.household_id
+         LEFT JOIN users processor ON processor.id = dr.processed_by
          LEFT JOIN users approver ON approver.id = dr.approved_by
          {$issued_join}
          WHERE dr.id = ?
@@ -33,14 +39,37 @@ function print_doc_e($value) {
     return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
 }
 
-$can_print = $request && in_array(strtolower((string)$request['status']), ['approved', 'released'], true);
+$status = $request ? strtolower((string)$request['status']) : '';
+$can_preview = $request && $is_preview && $is_captain && $status === 'for_approval';
+$can_print = $request && (in_array($status, ['approved', 'released'], true) || $can_preview);
 $resident_name = $request
     ? trim($request['first_name'] . ' ' . ($request['middle_name'] ? $request['middle_name'] . ' ' : '') . $request['last_name'])
     : '';
+$barangay_name = trim($settings['barangay_name'] ?? '') ?: 'Barangay Sta. Rosa 1';
+$municipality = trim($settings['municipality'] ?? '') ?: 'Noveleta';
+$province = trim($settings['province'] ?? '') ?: 'Cavite';
+$seal_path = trim($settings['barangay_seal'] ?? '') ?: 'assets/images/logo_noveleta.png';
+$signature_path = trim($settings['captain_signature'] ?? '');
+$active_captain = adm_table_exists($conn, 'officials')
+    ? adm_fetch_one(
+        $conn,
+        "SELECT u.fullname
+         FROM officials o
+         INNER JOIN users u ON u.id = o.user_id
+         WHERE o.position = 'captain' AND o.is_active = 1
+         ORDER BY o.term_end DESC
+         LIMIT 1"
+    )
+    : null;
+$captain_name = trim((string)($request['approved_by_name'] ?? ''))
+    ?: trim((string)($active_captain['fullname'] ?? ''))
+    ?: 'Juan A. Reyes';
 $address = $request
-    ? trim(implode(', ', array_filter([$request['house_number'], $request['street'], $request['purok'], 'Barangay Sta. Rosa 1, Noveleta, Cavite'])))
+    ? trim(implode(', ', array_filter([$request['house_number'], $request['street'], $request['purok'], $barangay_name . ', ' . $municipality . ', ' . $province])))
     : '';
-$doc_number = $request['doc_number'] ?? ('TEMP-' . date('Y') . '-' . str_pad((string)$request_id, 5, '0', STR_PAD_LEFT));
+$doc_number = $can_preview ? 'PREVIEW' : ($request['doc_number'] ?? ('TEMP-' . date('Y') . '-' . str_pad((string)$request_id, 5, '0', STR_PAD_LEFT)));
+$seal_src = '../' . ltrim(str_replace('\\', '/', $seal_path), '/');
+$signature_src = $signature_path !== '' ? '../' . ltrim(str_replace('\\', '/', $signature_path), '/') : '';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -65,13 +94,32 @@ $doc_number = $request['doc_number'] ?? ('TEMP-' . date('Y') . '-' . str_pad((st
       gap: 10px;
       flex-wrap: wrap;
     }
+    .signature-image {
+      max-width: 210px;
+      max-height: 52px;
+      object-fit: contain;
+      display: block;
+      margin: 0 auto -8px;
+    }
+    .preview-ribbon {
+      margin: 0 auto 14px;
+      max-width: 850px;
+      padding: 10px 12px;
+      border: 1px solid #f59e0b;
+      border-radius: 8px;
+      background: #fffbeb;
+      color: #92400e;
+      font-weight: 800;
+    }
   </style>
 </head>
 <body>
   <div class="print-toolbar no-print">
     <a class="btn" href="request-detail.php?id=<?= print_doc_e($request_id) ?>"><i class="fa-solid fa-arrow-left"></i> Back to detail</a>
     <?php if ($can_print): ?>
-      <button class="btn btn--primary" type="button" onclick="window.print()"><i class="fa-solid fa-print"></i> Print document</button>
+      <?php if (!$can_preview): ?>
+        <button class="btn btn--primary" type="button" onclick="window.print()"><i class="fa-solid fa-print"></i> Print document</button>
+      <?php endif; ?>
     <?php endif; ?>
   </div>
 
@@ -92,14 +140,17 @@ $doc_number = $request['doc_number'] ?? ('TEMP-' . date('Y') . '-' . str_pad((st
       </div>
     </section>
   <?php else: ?>
+    <?php if ($can_preview): ?>
+      <div class="preview-ribbon no-print">Preview only. Approval and document number are created after Captain signing.</div>
+    <?php endif; ?>
     <article class="print-sheet">
       <header class="print-header">
-        <img src="../assets/images/logo_noveleta.png" alt="Barangay seal">
+        <img src="<?= print_doc_e($seal_src) ?>" alt="Barangay seal">
         <div>
           <p>Republic of the Philippines</p>
-          <p>Province of Cavite</p>
-          <p>Municipality of Noveleta</p>
-          <h1>Barangay Sta. Rosa 1</h1>
+          <p>Province of <?= print_doc_e($province) ?></p>
+          <p>Municipality of <?= print_doc_e($municipality) ?></p>
+          <h1><?= print_doc_e($barangay_name) ?></h1>
           <p>Office of the Punong Barangay</p>
         </div>
         <div></div>
@@ -112,7 +163,7 @@ $doc_number = $request['doc_number'] ?? ('TEMP-' . date('Y') . '-' . str_pad((st
         <p>
           This is to certify that <strong><?= print_doc_e($resident_name) ?></strong>,
           of legal age, <?= print_doc_e(adm_status_label($request['civil_status'])) ?>,
-          and a resident of <strong><?= print_doc_e($address ?: 'Barangay Sta. Rosa 1, Noveleta, Cavite') ?></strong>,
+          and a resident of <strong><?= print_doc_e($address ?: $barangay_name . ', ' . $municipality . ', ' . $province) ?></strong>,
           is known to this barangay based on the available records of this office.
         </p>
         <p>
@@ -121,14 +172,17 @@ $doc_number = $request['doc_number'] ?? ('TEMP-' . date('Y') . '-' . str_pad((st
         </p>
         <p>
           Issued this <?= print_doc_e(date('jS')) ?> day of <?= print_doc_e(date('F Y')) ?>
-          at Barangay Sta. Rosa 1, Noveleta, Cavite.
+          at <?= print_doc_e($barangay_name) ?>, <?= print_doc_e($municipality) ?>, <?= print_doc_e($province) ?>.
         </p>
       </div>
 
       <div class="signature-row">
         <div class="signature-block">
+          <?php if ($signature_src !== ''): ?>
+            <img class="signature-image" src="<?= print_doc_e($signature_src) ?>" alt="">
+          <?php endif; ?>
           <div class="signature-line"></div>
-          <strong>HON. JUAN A. REYES</strong>
+          <strong>HON. <?= print_doc_e(strtoupper($captain_name)) ?></strong>
           <p>Punong Barangay</p>
         </div>
       </div>
@@ -144,7 +198,7 @@ $doc_number = $request['doc_number'] ?? ('TEMP-' . date('Y') . '-' . str_pad((st
         </div>
         <div>
           <dt>Prepared By</dt>
-          <dd><?= print_doc_e($user['fullname'] ?: 'Barangay Secretary') ?></dd>
+          <dd><?= print_doc_e($request['processed_by_name'] ?: ($user['fullname'] ?: 'Barangay Secretary')) ?></dd>
         </div>
         <div>
           <dt>Verification Token</dt>

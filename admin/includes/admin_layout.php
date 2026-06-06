@@ -63,9 +63,21 @@ function adm_page_start($title, $active, array $user, $page_class = '') {
     $pending_requests = adm_table_exists($conn, 'document_requests')
         ? adm_scalar($conn, "SELECT COUNT(*) FROM document_requests WHERE status = 'pending'")
         : 0;
+    $approval_requests = adm_table_exists($conn, 'document_requests')
+        ? adm_scalar($conn, "SELECT COUNT(*) FROM document_requests WHERE status = 'for_approval'")
+        : 0;
     $pending_verifications = adm_table_exists($conn, 'pending_resident_registrations')
         ? adm_scalar($conn, "SELECT COUNT(*) FROM pending_resident_registrations WHERE status = 'pending'")
         : 0;
+    $open_blotters = adm_table_exists($conn, 'blotter_cases')
+        ? adm_scalar($conn, "SELECT COUNT(*) FROM blotter_cases WHERE status IN ('open', 'under_mediation')")
+        : 0;
+    $expenditure_approvals = 0;
+    if (adm_table_exists($conn, 'expenditures')) {
+        $expenditure_approvals = adm_column_exists($conn, 'expenditures', 'approval_status')
+            ? adm_scalar($conn, "SELECT COUNT(*) FROM expenditures WHERE approval_status = 'pending'")
+            : adm_scalar($conn, 'SELECT COUNT(*) FROM expenditures WHERE approved_by IS NULL');
+    }
     $unread_count = adm_table_exists($conn, 'notifications')
         ? adm_scalar($conn, 'SELECT COUNT(*) FROM notifications WHERE user_id = ? AND is_read = 0', 'i', [(int)$user['id']])
         : 0;
@@ -82,6 +94,9 @@ function adm_page_start($title, $active, array $user, $page_class = '') {
         )
         : [];
     $flash = adm_pull_flash();
+    $role = strtolower(trim((string)($user['role'] ?? 'secretary')));
+    $role_label = adm_role_label($role);
+    $portal_label = $role === 'captain' ? 'Captain Portal' : ($role_label . ' Portal');
     $body_class = trim('secretary-admin ' . $page_class);
     ?>
 <!DOCTYPE html>
@@ -89,13 +104,13 @@ function adm_page_start($title, $active, array $user, $page_class = '') {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title><?= adm_e($title) ?> - Secretary Portal</title>
+  <title><?= adm_e($title) ?> - <?= adm_e($portal_label) ?></title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
   <link rel="shortcut icon" href="../assets/images/logo_noveleta.png">
-  <link rel="stylesheet" href="assets/css/secretary.css?v=20260605c">
+  <link rel="stylesheet" href="assets/css/secretary.css?v=20260607b">
   <script>
     (function () {
       try {
@@ -110,15 +125,15 @@ function adm_page_start($title, $active, array $user, $page_class = '') {
 <body class="<?= adm_e($body_class) ?>">
   <a class="skip-link" href="#mainContent">Skip to main content</a>
 
-  <aside class="admin-sidebar" id="adminSidebar" aria-label="Secretary navigation">
+  <aside class="admin-sidebar" id="adminSidebar" aria-label="<?= adm_e($role_label) ?> navigation">
     <div class="admin-sidebar__brand">
-      <a class="brand-lockup" href="dashboard.php" aria-label="Go to secretary dashboard">
+      <a class="brand-lockup" href="dashboard.php" aria-label="Go to dashboard">
         <span class="brand-lockup__mark">
           <img src="../assets/images/logo_noveleta.png" alt="Barangay seal">
         </span>
         <span>
           <strong>Brgy. Sta. Rosa 1</strong>
-          <small>Secretary Portal</small>
+          <small><?= adm_e($portal_label) ?></small>
         </span>
       </a>
       <button class="icon-button sidebar-close" type="button" data-sidebar-close aria-label="Close navigation">
@@ -127,24 +142,75 @@ function adm_page_start($title, $active, array $user, $page_class = '') {
     </div>
 
     <nav class="admin-nav">
-      <span class="admin-nav__section">Daily Work</span>
-      <?php adm_nav_item($active, 'dashboard', 'dashboard.php', 'fa-chart-line', 'Dashboard'); ?>
-      <?php adm_nav_item($active, 'requests', 'requests.php', 'fa-file-lines', 'Document Requests', $pending_requests); ?>
-      <?php adm_nav_item($active, 'issued', 'issued.php', 'fa-file-circle-check', 'Issued Documents'); ?>
+      <?php if ($role === 'captain'): ?>
+        <span class="admin-nav__section">Main</span>
+        <?php adm_nav_item($active, 'dashboard', 'dashboard.php', 'fa-chart-line', 'Dashboard', $approval_requests); ?>
 
-      <span class="admin-nav__section">Residents</span>
-      <?php adm_nav_item($active, 'residents', 'residents.php', 'fa-users', 'Resident Masterlist', $pending_verifications); ?>
-      <?php adm_nav_item($active, 'resident-form', 'resident-form.php', 'fa-user-plus', 'Add Resident'); ?>
-      <?php adm_nav_item($active, 'households', 'households.php', 'fa-house-chimney-window', 'Households'); ?>
+        <span class="admin-nav__section">Approvals</span>
+        <?php adm_nav_item($active, 'requests', 'requests.php?filter=for_approval', 'fa-stamp', 'Document Approvals', $approval_requests); ?>
+        <?php adm_nav_item($active, 'finance', 'finance.php?tab=expenditures', 'fa-money-check-dollar', 'Expenditure Approvals', $expenditure_approvals); ?>
 
-      <span class="admin-nav__section">Barangay Records</span>
-      <?php adm_nav_item($active, 'blotter', 'blotter.php', 'fa-scale-balanced', 'Blotter Cases'); ?>
-      <?php adm_nav_item($active, 'hearings', 'hearings.php', 'fa-calendar-check', 'Hearings'); ?>
-      <?php adm_nav_item($active, 'announcements', 'announcements.php', 'fa-bullhorn', 'Announcements'); ?>
-      <?php adm_nav_item($active, 'events', 'events.php', 'fa-calendar-days', 'Events Calendar'); ?>
-      <?php adm_nav_item($active, 'reports', 'reports.php', 'fa-chart-pie', 'Reports'); ?>
+        <span class="admin-nav__section">Documents</span>
+        <?php adm_nav_item($active, 'all-requests', 'requests.php', 'fa-file-lines', 'All Requests'); ?>
+        <?php adm_nav_item($active, 'issued', 'issued.php', 'fa-file-circle-check', 'Issued Documents'); ?>
+        <?php adm_nav_item($active, 'verify', '../verify.php', 'fa-qrcode', 'Verify Document'); ?>
+
+        <span class="admin-nav__section">Residents</span>
+        <?php adm_nav_item($active, 'residents', 'residents.php', 'fa-users', 'Resident Records', $pending_verifications); ?>
+        <?php adm_nav_item($active, 'households', 'households.php', 'fa-house-chimney-window', 'Households'); ?>
+
+        <span class="admin-nav__section">Blotter</span>
+        <?php adm_nav_item($active, 'blotter', 'blotter.php', 'fa-scale-balanced', 'Blotter Cases', $open_blotters); ?>
+        <?php adm_nav_item($active, 'hearings', 'hearings.php', 'fa-calendar-check', 'Hearing Schedule'); ?>
+
+        <span class="admin-nav__section">Finance</span>
+        <?php adm_nav_item($active, 'finance-overview', 'finance.php', 'fa-wallet', 'Financial Overview'); ?>
+        <?php adm_nav_item($active, 'reports', 'reports.php', 'fa-chart-pie', 'Reports'); ?>
+
+        <span class="admin-nav__section">Programs</span>
+        <?php adm_nav_item($active, 'projects', 'projects.php', 'fa-diagram-project', 'Projects & Programs'); ?>
+
+        <span class="admin-nav__section">Content</span>
+        <?php adm_nav_item($active, 'announcements', 'announcements.php', 'fa-bullhorn', 'Announcements'); ?>
+        <?php adm_nav_item($active, 'events', 'events.php', 'fa-calendar-days', 'Events Calendar'); ?>
+
+        <span class="admin-nav__section">Officials</span>
+        <?php adm_nav_item($active, 'officials', 'officials.php', 'fa-people-roof', 'Officials Directory'); ?>
+
+        <span class="admin-nav__section">System</span>
+        <?php adm_nav_item($active, 'settings', 'settings.php', 'fa-gear', 'System Settings'); ?>
+        <?php adm_nav_item($active, 'audit', 'audit.php', 'fa-shield-halved', 'Audit Trail'); ?>
+      <?php elseif ($role === 'treasurer'): ?>
+        <span class="admin-nav__section">Finance</span>
+        <?php adm_nav_item($active, 'dashboard', 'dashboard.php', 'fa-chart-line', 'Dashboard'); ?>
+        <?php adm_nav_item($active, 'finance', 'finance.php', 'fa-wallet', 'Financial Overview', $expenditure_approvals); ?>
+        <?php adm_nav_item($active, 'reports', 'reports.php', 'fa-chart-pie', 'Reports'); ?>
+      <?php elseif (in_array($role, ['kagawad', 'sk_chair', 'sk_kagawad'], true)): ?>
+        <span class="admin-nav__section">Programs</span>
+        <?php adm_nav_item($active, 'dashboard', 'dashboard.php', 'fa-chart-line', 'Dashboard'); ?>
+        <?php adm_nav_item($active, 'projects', 'projects.php', 'fa-diagram-project', 'Projects & Programs'); ?>
+        <?php adm_nav_item($active, 'blotter', 'blotter.php', 'fa-scale-balanced', 'Blotter Cases', $open_blotters); ?>
+      <?php else: ?>
+        <span class="admin-nav__section">Daily Work</span>
+        <?php adm_nav_item($active, 'dashboard', 'dashboard.php', 'fa-chart-line', 'Dashboard'); ?>
+        <?php adm_nav_item($active, 'requests', 'requests.php', 'fa-file-lines', 'Document Requests', $pending_requests); ?>
+        <?php adm_nav_item($active, 'issued', 'issued.php', 'fa-file-circle-check', 'Issued Documents'); ?>
+
+        <span class="admin-nav__section">Residents</span>
+        <?php adm_nav_item($active, 'residents', 'residents.php', 'fa-users', 'Resident Masterlist', $pending_verifications); ?>
+        <?php adm_nav_item($active, 'resident-form', 'resident-form.php', 'fa-user-plus', 'Add Resident'); ?>
+        <?php adm_nav_item($active, 'households', 'households.php', 'fa-house-chimney-window', 'Households'); ?>
+
+        <span class="admin-nav__section">Barangay Records</span>
+        <?php adm_nav_item($active, 'blotter', 'blotter.php', 'fa-scale-balanced', 'Blotter Cases', $open_blotters); ?>
+        <?php adm_nav_item($active, 'hearings', 'hearings.php', 'fa-calendar-check', 'Hearings'); ?>
+        <?php adm_nav_item($active, 'announcements', 'announcements.php', 'fa-bullhorn', 'Announcements'); ?>
+        <?php adm_nav_item($active, 'events', 'events.php', 'fa-calendar-days', 'Events Calendar'); ?>
+        <?php adm_nav_item($active, 'reports', 'reports.php', 'fa-chart-pie', 'Reports'); ?>
+      <?php endif; ?>
 
       <span class="admin-nav__section">Account</span>
+      <?php adm_nav_item($active, 'notifications', 'notifications.php', 'fa-bell', 'Notifications', $unread_count); ?>
       <?php adm_nav_item($active, 'profile', 'profile.php', 'fa-user-gear', 'My Profile'); ?>
       <a class="admin-nav__link admin-nav__link--danger" href="../logout.php">
         <i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i>
@@ -156,7 +222,7 @@ function adm_page_start($title, $active, array $user, $page_class = '') {
       <?= adm_avatar_markup($initials, $official_photo) ?>
       <span>
         <strong><?= adm_e($display_name) ?></strong>
-        <small>Barangay Secretary</small>
+        <small><?= adm_e($role_label) ?></small>
       </span>
     </div>
   </aside>
@@ -215,7 +281,7 @@ function adm_page_start($title, $active, array $user, $page_class = '') {
             <?= adm_avatar_markup($initials, $official_photo, true) ?>
             <span class="profile-chip__text">
               <strong><?= adm_e(adm_first_name($display_name)) ?></strong>
-              <small>Secretary</small>
+              <small><?= adm_e($role_label) ?></small>
             </span>
             <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
           </button>

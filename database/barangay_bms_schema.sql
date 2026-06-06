@@ -2,7 +2,7 @@
 -- Barangay Sta. Rosa 1 Management System
 -- Database : barangay_bms
 -- Engine   : InnoDB  |  Charset: utf8mb4  |  MySQL 8.0
--- Tables   : 18  (15 core + notifications + announcements + audit_logs)
+-- Tables   : 22  (core modules + notifications + announcements + settings + audit_logs)
 --
 -- HOW TO USE:
 --   1. Open phpMyAdmin → http://localhost/phpmyadmin
@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS users (
                   'secretary',
                   'treasurer',
                   'kagawad',
+                  'sk_chair',
+                  'sk_kagawad',
                   'resident'
                 )               NOT NULL DEFAULT 'resident',
   status        ENUM(
@@ -369,7 +371,14 @@ CREATE TABLE IF NOT EXISTS expenditures (
   disbursement_date   DATE           NOT NULL,
   payee               VARCHAR(120)   NULL DEFAULT NULL,
   supporting_doc_path VARCHAR(255)   NULL DEFAULT NULL,
+  approval_status     ENUM(
+                        'pending',
+                        'approved',
+                        'rejected'
+                      )              NOT NULL DEFAULT 'pending',
+  approval_notes      TEXT           NULL DEFAULT NULL,
   approved_by         INT UNSIGNED   NULL DEFAULT NULL,
+  approved_at         TIMESTAMP      NULL DEFAULT NULL,
   recorded_by         INT UNSIGNED   NOT NULL,
   created_at          TIMESTAMP      NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
@@ -401,6 +410,54 @@ CREATE TABLE IF NOT EXISTS budget_items (
   KEY idx_budget_category (category),
   CONSTRAINT fk_budget_creator FOREIGN KEY (created_by)
     REFERENCES users (id) ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- TABLE 12B: projects
+-- Barangay development projects and committee programs
+CREATE TABLE IF NOT EXISTS projects (
+  id               INT UNSIGNED   NOT NULL AUTO_INCREMENT,
+  title            VARCHAR(160)   NOT NULL,
+  committee        VARCHAR(100)   NOT NULL,
+  assigned_user_id INT UNSIGNED   NULL DEFAULT NULL,
+  category         VARCHAR(60)    NOT NULL,
+  description      TEXT           NOT NULL,
+  status           ENUM('planning','ongoing','completed','on_hold') NOT NULL DEFAULT 'planning',
+  start_date       DATE           NOT NULL,
+  target_end_date  DATE           NOT NULL,
+  estimated_budget DECIMAL(12,2)  NULL DEFAULT NULL,
+  progress_percent TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  archived_at      TIMESTAMP      NULL DEFAULT NULL,
+  created_by       INT UNSIGNED   NOT NULL,
+  updated_by       INT UNSIGNED   NULL DEFAULT NULL,
+  created_at       TIMESTAMP      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at       TIMESTAMP      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_projects_committee (committee),
+  KEY idx_projects_status    (status),
+  KEY idx_projects_assigned  (assigned_user_id),
+  CONSTRAINT fk_projects_assigned FOREIGN KEY (assigned_user_id)
+    REFERENCES users (id) ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT fk_projects_creator FOREIGN KEY (created_by)
+    REFERENCES users (id) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT fk_projects_updater FOREIGN KEY (updated_by)
+    REFERENCES users (id) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- TABLE 12C: project_photos
+-- Optional progress photo documentation for projects
+CREATE TABLE IF NOT EXISTS project_photos (
+  id            INT UNSIGNED  NOT NULL AUTO_INCREMENT,
+  project_id    INT UNSIGNED  NOT NULL,
+  file_path     VARCHAR(255)  NOT NULL,
+  original_name VARCHAR(200)  NOT NULL,
+  uploaded_by   INT UNSIGNED  NULL DEFAULT NULL,
+  uploaded_at   TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_project_photos_project (project_id),
+  CONSTRAINT fk_project_photos_project FOREIGN KEY (project_id)
+    REFERENCES projects (id) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_project_photos_uploader FOREIGN KEY (uploaded_by)
+    REFERENCES users (id) ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
@@ -569,6 +626,35 @@ CREATE TABLE IF NOT EXISTS announcements (
     REFERENCES users (id) ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- TABLE 17B: system_settings
+-- Captain-managed barangay profile, mail, seal, and signature settings
+CREATE TABLE IF NOT EXISTS system_settings (
+  setting_key   VARCHAR(80)  NOT NULL,
+  setting_value TEXT         NULL DEFAULT NULL,
+  updated_by    INT UNSIGNED NULL DEFAULT NULL,
+  updated_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (setting_key),
+  CONSTRAINT fk_settings_updater FOREIGN KEY (updated_by)
+    REFERENCES users (id) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- TABLE 17C: role_permissions
+-- Captain-managed read/write/delete module permissions by role
+CREATE TABLE IF NOT EXISTS role_permissions (
+  id         INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  role       VARCHAR(40)  NOT NULL,
+  module     VARCHAR(80)  NOT NULL,
+  can_read   TINYINT(1)   NOT NULL DEFAULT 0,
+  can_write  TINYINT(1)   NOT NULL DEFAULT 0,
+  can_delete TINYINT(1)   NOT NULL DEFAULT 0,
+  updated_by INT UNSIGNED NULL DEFAULT NULL,
+  updated_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_role_module (role, module),
+  CONSTRAINT fk_role_permissions_updater FOREIGN KEY (updated_by)
+    REFERENCES users (id) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 
 -- ─────────────────────────────────────────────────────────────
 -- TABLE 18: audit_logs
@@ -604,28 +690,18 @@ INSERT INTO document_types
   ('Certificate of Indigency',  'certificate-indigency',     0.00, 1, 1, 'Valid government ID; Proof of residency; Supporting document for assistance request if available'),
   ('Business Clearance',        'business-clearance',      300.00, 2, 1, 'Valid government ID; Proof of business address; Business registration document if available'),
   ('Barangay Certification',    'barangay-certification',   50.00, 1, 1, 'Valid government ID; Supporting document for the certification type'),
-  ('Blotter Certificate',       'blotter-certificate',     100.00, 2, 1, 'Valid government ID; Blotter case reference number');
-
-
--- ─────────────────────────────────────────────────────────────
--- SEED: default admin user
--- username : admin_captain
--- password : Admin@BMS2025  ← CHANGE IMMEDIATELY after first login
--- Generate real hash in PHP:
---   echo password_hash('Admin@BMS2025', PASSWORD_BCRYPT);
--- ─────────────────────────────────────────────────────────────
-INSERT INTO users
-  (username, fullname, email, password_hash, role, status) VALUES
-  ('admin_captain',
-   'Juan Reyes',
-   'captain@starosa1.gov.ph',
-   '$2y$10$ReplaceThisWithRealBcryptHashFromPHP',
-   'captain',
-   'active');
+  ('Blotter Certificate',       'blotter-certificate',     100.00, 2, 1, 'Valid government ID; Blotter case reference number')
+ON DUPLICATE KEY UPDATE
+  name = VALUES(name),
+  fee = VALUES(fee),
+  processing_days = VALUES(processing_days),
+  requires_approval = VALUES(requires_approval),
+  requirements = VALUES(requirements),
+  is_active = 1;
 
 
 -- ─────────────────────────────────────────────────────────────
 -- END OF SCRIPT
--- 18 tables created  |  6 document types seeded
--- 1 default admin account seeded (change password before go-live)
+-- 22 tables created  |  6 document types seeded
+-- No default official account is seeded. Create the first captain account with a real password hash before go-live.
 -- ─────────────────────────────────────────────────────────────

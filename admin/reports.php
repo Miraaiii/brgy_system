@@ -1,7 +1,9 @@
 <?php
 require_once __DIR__ . '/includes/admin_layout.php';
 
-$user = adm_require_secretary($conn);
+$user = adm_require_admin($conn, ['captain', 'secretary', 'treasurer']);
+$role = strtolower(trim((string)($user['role'] ?? '')));
+$is_captain = $role === 'captain';
 $report_types = [
     'document_requests' => 'Document Requests Summary',
     'issued_documents' => 'Issued Documents Log',
@@ -9,6 +11,21 @@ $report_types = [
     'blotter_cases' => 'Blotter Cases Summary',
     'pending_verifications' => 'Pending Verifications',
 ];
+if ($is_captain) {
+    $report_types += [
+        'monthly_financial_summary' => 'Monthly Financial Summary',
+        'annual_budget_utilization' => 'Annual Budget Utilization',
+        'annual_income_statement' => 'Annual Income Statement',
+        'case_resolution_rate' => 'Case Resolution Rate',
+        'user_activity' => 'User Activity Report',
+    ];
+} elseif ($role === 'treasurer') {
+    $report_types = [
+        'monthly_financial_summary' => 'Monthly Financial Summary',
+        'annual_budget_utilization' => 'Annual Budget Utilization',
+        'annual_income_statement' => 'Annual Income Statement',
+    ];
+}
 
 $report_type = (string)($_GET['report_type'] ?? 'document_requests');
 if (!isset($report_types[$report_type])) {
@@ -127,6 +144,106 @@ function reports_build_dataset($conn, $report_type, $from, $to) {
             $params
         );
         $rows = array_map(fn($row) => [$row['resident_name'], $row['email'], $row['mobile_number'], $row['purok_zone'], $row['created_at']], $raw);
+    } elseif ($report_type === 'monthly_financial_summary') {
+        $headers = ['Month', 'Income', 'Expenses', 'Net Balance'];
+        $income = adm_table_exists($conn, 'collections')
+            ? adm_fetch_all(
+                $conn,
+                "SELECT DATE_FORMAT(collected_at, '%Y-%m') AS month_key, COALESCE(SUM(amount), 0) AS income
+                 FROM collections
+                 GROUP BY DATE_FORMAT(collected_at, '%Y-%m')"
+            )
+            : [];
+        $expense = adm_table_exists($conn, 'expenditures')
+            ? adm_fetch_all(
+                $conn,
+                "SELECT DATE_FORMAT(disbursement_date, '%Y-%m') AS month_key, COALESCE(SUM(amount), 0) AS expenses
+                 FROM expenditures
+                 WHERE " . (adm_column_exists($conn, 'expenditures', 'approval_status') ? "approval_status <> 'rejected'" : '1=1') . "
+                 GROUP BY DATE_FORMAT(disbursement_date, '%Y-%m')"
+            )
+            : [];
+        $summary = [];
+        foreach ($income as $row) {
+            $summary[$row['month_key']]['income'] = (float)$row['income'];
+        }
+        foreach ($expense as $row) {
+            $summary[$row['month_key']]['expenses'] = (float)$row['expenses'];
+        }
+        krsort($summary);
+        foreach ($summary as $month => $values) {
+            $income_total = $values['income'] ?? 0;
+            $expense_total = $values['expenses'] ?? 0;
+            $rows[] = [$month, number_format($income_total, 2), number_format($expense_total, 2), number_format($income_total - $expense_total, 2)];
+        }
+    } elseif ($report_type === 'annual_budget_utilization' && adm_table_exists($conn, 'budget_items')) {
+        $headers = ['Fiscal Year', 'Category', 'Allocated', 'Spent', 'Utilized %'];
+        if (adm_table_exists($conn, 'expenditures')) {
+            $expense_status = adm_column_exists($conn, 'expenditures', 'approval_status')
+                ? "AND e.approval_status <> 'rejected'"
+                : '';
+            $raw = adm_fetch_all(
+                $conn,
+                "SELECT b.fiscal_year, b.category, SUM(b.allocated_amount) AS allocated,
+                        COALESCE((SELECT SUM(e.amount) FROM expenditures e WHERE YEAR(e.disbursement_date) = b.fiscal_year AND e.category = b.category {$expense_status}), 0) AS spent
+                 FROM budget_items b
+                 GROUP BY b.fiscal_year, b.category
+                 ORDER BY b.fiscal_year DESC, b.category ASC"
+            );
+        } else {
+            $raw = adm_fetch_all(
+                $conn,
+                'SELECT fiscal_year, category, SUM(allocated_amount) AS allocated, 0 AS spent
+                 FROM budget_items
+                 GROUP BY fiscal_year, category
+                 ORDER BY fiscal_year DESC, category ASC'
+            );
+        }
+        foreach ($raw as $row) {
+            $allocated = (float)$row['allocated'];
+            $spent = (float)$row['spent'];
+            $rows[] = [$row['fiscal_year'], $row['category'], number_format($allocated, 2), number_format($spent, 2), $allocated > 0 ? round(($spent / $allocated) * 100) . '%' : '0%'];
+        }
+    } elseif ($report_type === 'annual_income_statement') {
+        $headers = ['Year', 'Income', 'Expenses', 'Net Balance'];
+        $income = adm_table_exists($conn, 'collections')
+            ? adm_fetch_all($conn, 'SELECT YEAR(collected_at) AS year_key, COALESCE(SUM(amount), 0) AS total FROM collections GROUP BY YEAR(collected_at)')
+            : [];
+        $expense_where = adm_table_exists($conn, 'expenditures') && adm_column_exists($conn, 'expenditures', 'approval_status') ? "WHERE approval_status <> 'rejected'" : '';
+        $expense = adm_table_exists($conn, 'expenditures')
+            ? adm_fetch_all($conn, "SELECT YEAR(disbursement_date) AS year_key, COALESCE(SUM(amount), 0) AS total FROM expenditures {$expense_where} GROUP BY YEAR(disbursement_date)")
+            : [];
+        $summary = [];
+        foreach ($income as $row) {
+            $summary[$row['year_key']]['income'] = (float)$row['total'];
+        }
+        foreach ($expense as $row) {
+            $summary[$row['year_key']]['expenses'] = (float)$row['total'];
+        }
+        krsort($summary);
+        foreach ($summary as $year => $values) {
+            $income_total = $values['income'] ?? 0;
+            $expense_total = $values['expenses'] ?? 0;
+            $rows[] = [$year, number_format($income_total, 2), number_format($expense_total, 2), number_format($income_total - $expense_total, 2)];
+        }
+    } elseif ($report_type === 'case_resolution_rate' && adm_table_exists($conn, 'blotter_cases')) {
+        $headers = ['Status', 'Total', 'Share'];
+        $raw = adm_fetch_all($conn, 'SELECT status, COUNT(*) AS total FROM blotter_cases GROUP BY status ORDER BY total DESC');
+        $total = array_sum(array_map(fn($row) => (int)$row['total'], $raw));
+        foreach ($raw as $row) {
+            $rows[] = [adm_status_label($row['status']), $row['total'], $total > 0 ? round(((int)$row['total'] / $total) * 100) . '%' : '0%'];
+        }
+    } elseif ($report_type === 'user_activity' && adm_table_exists($conn, 'audit_logs')) {
+        $headers = ['User', 'Role', 'Action Count', 'Last Activity'];
+        $raw = adm_fetch_all(
+            $conn,
+            "SELECT COALESCE(u.fullname, 'System') AS fullname, u.role, COUNT(*) AS total, MAX(al.created_at) AS last_activity
+             FROM audit_logs al
+             LEFT JOIN users u ON u.id = al.user_id
+             GROUP BY al.user_id, u.fullname, u.role
+             ORDER BY total DESC, last_activity DESC"
+        );
+        $rows = array_map(fn($row) => [$row['fullname'], adm_role_label($row['role'] ?? ''), $row['total'], $row['last_activity']], $raw);
     }
 
     return [$headers, $rows];
@@ -196,7 +313,7 @@ $actions = '<a class="btn" href="reports.php?' . adm_e(http_build_query($query_b
 $actions .= '<a class="btn btn--primary" target="_blank" rel="noopener" href="reports.php?' . adm_e(http_build_query($query_base + ['export' => 'pdf'])) . '"><i class="fa-solid fa-file-pdf"></i> Export PDF</a>';
 
 adm_page_start('Reports', 'reports', $user, 'reports-page');
-adm_page_header('Secretary reports', 'Generate Reports', 'Choose a report type, preview the data, then export it for submission.', $actions);
+adm_page_header($is_captain ? 'Captain full reports' : 'Reports', 'Generate Reports', 'Choose a report type, preview the data, then export it for submission.', $actions);
 ?>
 
 <form class="filter-panel" method="get">

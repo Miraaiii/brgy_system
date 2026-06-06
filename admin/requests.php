@@ -1,8 +1,10 @@
 <?php
 require_once __DIR__ . '/includes/admin_layout.php';
 
-$user = adm_require_secretary($conn);
+$user = adm_require_admin($conn, ['captain', 'secretary']);
 $csrf = adm_action_token();
+$role = strtolower(trim((string)($user['role'] ?? '')));
+$is_captain = $role === 'captain';
 $statuses = ['all', 'pending', 'processing', 'for_approval', 'approved', 'released', 'rejected'];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -14,7 +16,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             (string)($_POST['action'] ?? ''),
             (int)($_POST['request_id'] ?? 0),
             (int)$user['id'],
-            (string)($_POST['reason'] ?? '')
+            (string)($_POST['reason'] ?? ''),
+            $role
         );
         adm_set_flash($ok ? 'success' : 'danger', $message);
     }
@@ -77,7 +80,7 @@ if (adm_table_exists($conn, 'document_requests') && adm_table_exists($conn, 'res
     $requests = adm_fetch_all(
         $conn,
         "SELECT dr.id, dr.reference_no, dr.purpose, dr.status, dr.remarks,
-                dr.created_at, dr.processed_at, dr.approved_at, dr.released_at,
+                dr.created_at, dr.updated_at, dr.processed_at, dr.approved_at, dr.released_at,
                 dt.name AS document_name, dt.requires_approval,
                 CONCAT(r.first_name, ' ', r.last_name) AS resident_name,
                 r.email AS resident_email,
@@ -98,7 +101,12 @@ if (adm_table_exists($conn, 'document_requests') && adm_table_exists($conn, 'res
 $actions = '<a class="btn btn--primary" href="issued.php"><i class="fa-solid fa-file-circle-check"></i> Issued log</a>';
 
 adm_page_start('Document Requests', 'requests', $user, 'requests-page');
-adm_page_header('Secretary inbox', 'Document Request Inbox', 'Review, process, approve, reject, print, and release resident document requests.', $actions);
+adm_page_header(
+    $is_captain ? 'Captain approvals' : 'Secretary inbox',
+    $is_captain && $filter === 'for_approval' ? 'Document Approvals Queue' : 'Document Request Inbox',
+    $is_captain ? 'Review requests sent for your approval, sign documents, or return them to the Secretary.' : 'Review, process, approve, reject, print, and release resident document requests.',
+    $actions
+);
 ?>
 
 <nav class="tabs" aria-label="Request status filters">
@@ -165,6 +173,7 @@ adm_page_header('Secretary inbox', 'Document Request Inbox', 'Review, process, a
               $status = strtolower((string)$request['status']);
               $overdue = adm_request_is_overdue($request['created_at'], $status);
               $needs_approval = (int)$request['requires_approval'] === 1;
+              $days_waiting = $status === 'for_approval' ? adm_days_waiting($request['updated_at'] ?: $request['created_at']) : 0;
             ?>
             <tr class="<?= $overdue ? 'is-overdue' : '' ?>">
               <td>
@@ -180,6 +189,29 @@ adm_page_header('Secretary inbox', 'Document Request Inbox', 'Review, process, a
               <td><span class="status-badge status-badge--<?= adm_e(adm_status_class($status)) ?>"><?= adm_e(adm_status_label($status)) ?></span></td>
               <td>
                 <div class="table-actions">
+                  <?php if ($is_captain && $status === 'for_approval'): ?>
+                    <form method="post" data-disable-on-submit>
+                      <input type="hidden" name="csrf_token" value="<?= adm_e($csrf) ?>">
+                      <input type="hidden" name="action" value="captain_approve_request">
+                      <input type="hidden" name="request_id" value="<?= adm_e($request['id']) ?>">
+                      <button class="btn btn--success btn--small" type="submit"><i class="fa-solid fa-signature"></i> Approve &amp; Sign</button>
+                    </form>
+                    <details class="inline-reject">
+                      <summary class="btn btn--danger btn--small"><i class="fa-solid fa-reply"></i> Send Back</summary>
+                      <form class="inline-reject__body" method="post" data-disable-on-submit>
+                        <input type="hidden" name="csrf_token" value="<?= adm_e($csrf) ?>">
+                        <input type="hidden" name="action" value="captain_return_request">
+                        <input type="hidden" name="request_id" value="<?= adm_e($request['id']) ?>">
+                        <div class="form-field">
+                          <label for="return-<?= adm_e($request['id']) ?>">Reason</label>
+                          <input id="return-<?= adm_e($request['id']) ?>" name="reason" type="text" required>
+                        </div>
+                        <button class="btn btn--danger btn--small" type="submit">Return to Secretary</button>
+                      </form>
+                    </details>
+                    <a class="btn btn--small" href="print-document.php?id=<?= adm_e($request['id']) ?>&preview=1" target="_blank" rel="noopener"><i class="fa-solid fa-file-pdf"></i> Preview</a>
+                  <?php endif; ?>
+
                   <?php if ($status === 'pending'): ?>
                     <form method="post" data-disable-on-submit>
                       <input type="hidden" name="csrf_token" value="<?= adm_e($csrf) ?>">
@@ -237,6 +269,9 @@ adm_page_header('Secretary inbox', 'Document Request Inbox', 'Review, process, a
 
                   <a class="btn btn--small" href="request-detail.php?id=<?= adm_e($request['id']) ?>"><i class="fa-solid fa-eye"></i> View</a>
                 </div>
+                <?php if ($status === 'for_approval'): ?>
+                  <small><?= adm_e($days_waiting) ?> day<?= $days_waiting === 1 ? '' : 's' ?> waiting</small>
+                <?php endif; ?>
               </td>
             </tr>
           <?php endforeach; ?>

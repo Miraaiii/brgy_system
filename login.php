@@ -139,7 +139,7 @@ function json_official_login_redirect() {
     set_official_login_notice();
     echo json_encode([
         "status" => "redirect",
-        "message" => "Official accounts use the Secretary login portal.",
+        "message" => "Official accounts use the Officials Login portal.",
         "redirect" => "admin/login.php"
     ]);
     exit();
@@ -150,7 +150,7 @@ function dashboard_redirect_for_role($role) {
     if ($role === 'resident') {
         return 'portal/resident_dashboard.php';
     }
-    if ($role === 'secretary') {
+    if (in_array($role, ['captain', 'secretary', 'treasurer', 'kagawad', 'sk_chair', 'sk_kagawad'], true)) {
         return 'admin/dashboard.php';
     }
     return 'dashboard.php';
@@ -584,6 +584,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             <div class="logo-mark"><img src="assets/images/logo_noveleta.png" alt="logo" /></div>
             <h1 class="panel__title">Welcome Back</h1>
             <p class="panel__sub">Sign in to continue to the portal</p>
+          </div>
+
+          <div class="official-entry" aria-label="Officials login shortcut">
+            <span><i class="bi bi-person-badge-fill" aria-hidden="true"></i> Barangay official?</span>
+            <a href="admin/login.php">Officials Login</a>
           </div>
 
           <form id="loginForm" method="post" onsubmit="return false;" novalidate>

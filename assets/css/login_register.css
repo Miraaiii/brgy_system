@@ -822,6 +822,52 @@ select.form-input option:disabled {
 }
 .social-divider span { padding: 0 0.8rem; }
 
+.official-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .9rem;
+  margin: 1rem 0 1.1rem;
+  padding: .85rem .95rem;
+  border: 1px solid rgba(240, 180, 41, .28);
+  border-radius: var(--radius-input);
+  background: rgba(240, 180, 41, .1);
+  color: rgba(255, 255, 255, .82);
+  font-size: .86rem;
+}
+.official-entry span,
+.official-entry a {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+}
+.official-entry a {
+  min-height: 44px;
+  padding: 0 .95rem;
+  border-radius: var(--radius-input);
+  background: var(--gold);
+  color: var(--navy);
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: var(--transition);
+}
+.official-entry a:hover {
+  background: var(--gold-light);
+}
+
+@media (max-width: 520px) {
+  .official-entry {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .official-entry a {
+    justify-content: center;
+    width: 100%;
+  }
+}
+
 /* ── Social Buttons (Google) ── */
 .btn-social {
   width: 100%;

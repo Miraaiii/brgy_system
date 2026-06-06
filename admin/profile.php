@@ -1,7 +1,7 @@
 <?php
 require_once __DIR__ . '/includes/admin_layout.php';
 
-$user = adm_require_secretary($conn);
+$user = adm_require_admin($conn);
 $csrf = adm_action_token();
 
 function secretary_upload_profile_photo($field_name, $current = '') {
@@ -151,7 +151,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit();
 }
 
-$user = adm_require_secretary($conn);
+$user = adm_require_admin($conn);
 $official = secretary_get_official($conn, (int)$user['id']);
 $term_start = $official['term_start'] ?? date('Y-m-d');
 $term_end = $official['term_end'] ?? date('Y-m-d', strtotime('+3 years'));

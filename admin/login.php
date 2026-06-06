@@ -9,7 +9,9 @@ require_once __DIR__ . '/../config/auth_helpers.php';
 define('ADMIN_RECAPTCHA_SITE_KEY', getenv('RECAPTCHA_SITE_KEY') ?: '6LestQctAAAAAPiLpjPpGUxwyduFzk-azuaY32TJ');
 define('ADMIN_RECAPTCHA_SECRET_KEY', getenv('RECAPTCHA_SECRET_KEY') ?: '6LestQctAAAAALEbXP8QcVMnr_pp5Qo9MK5YY93l');
 
-if (!empty($_SESSION['user_id']) && strtolower((string)($_SESSION['role'] ?? '')) === 'secretary') {
+$admin_roles = ['captain', 'secretary', 'treasurer', 'kagawad', 'sk_chair', 'sk_kagawad'];
+
+if (!empty($_SESSION['user_id']) && in_array(strtolower((string)($_SESSION['role'] ?? '')), $admin_roles, true)) {
     header('Location: dashboard.php');
     exit();
 }
@@ -96,14 +98,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (!$user || !password_verify($password, (string)$user['password_hash'])) {
             $error = 'Invalid email or password.';
-        } elseif (strtolower((string)$user['role']) !== 'secretary') {
-            $error = 'This login is only for Barangay Secretary accounts.';
+        } elseif (!in_array(strtolower((string)$user['role']), $admin_roles, true)) {
+            $error = 'This login is only for active barangay official accounts.';
         } elseif (strtolower((string)$user['status']) !== 'active') {
-            $error = 'This Secretary account is not active.';
+            $error = 'This official account is not active.';
         } else {
+            $role = strtolower((string)$user['role']);
             $_SESSION['user_id'] = (int)$user['id'];
             $_SESSION['email'] = $user['email'];
-            $_SESSION['role'] = 'secretary';
+            $_SESSION['role'] = $role;
 
             if ($conn && $conn->query("SHOW COLUMNS FROM users LIKE 'last_login_at'")->num_rows > 0) {
                 $update = $conn->prepare('UPDATE users SET last_login_at = NOW() WHERE id = ?');
@@ -112,6 +115,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $update->bind_param('i', $user_id);
                     $update->execute();
                     $update->close();
+                }
+            }
+            $audit_table = $conn ? $conn->query("SHOW TABLES LIKE 'audit_logs'") : false;
+            if ($audit_table && $audit_table->num_rows > 0) {
+                $stmt_log = $conn->prepare(
+                    'INSERT INTO audit_logs (user_id, action, table_name, record_id, ip_address, user_agent)
+                     VALUES (?, ?, ?, ?, ?, ?)'
+                );
+                if ($stmt_log) {
+                    $action = 'login_success';
+                    $table = 'users';
+                    $record_id = (int)$user['id'];
+                    $ip = $_SERVER['REMOTE_ADDR'] ?? null;
+                    $agent = isset($_SERVER['HTTP_USER_AGENT']) ? substr((string)$_SERVER['HTTP_USER_AGENT'], 0, 255) : null;
+                    $stmt_log->bind_param('ississ', $record_id, $action, $table, $record_id, $ip, $agent);
+                    $stmt_log->execute();
+                    $stmt_log->close();
                 }
             }
 
@@ -128,7 +148,7 @@ $csrf = bms_csrf_token('admin_login_csrf');
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Secretary Login - Barangay Sta. Rosa 1</title>
+  <title>Official Login - Barangay Sta. Rosa 1</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=DM+Serif+Display&display=swap" rel="stylesheet" />
@@ -243,8 +263,8 @@ $csrf = bms_csrf_token('admin_login_csrf');
         <div class="panel__inner">
           <div class="panel__header">
             <div class="logo-mark"><img src="../assets/images/logo_noveleta.png" alt="logo" /></div>
-            <h1 class="panel__title">Secretary Login</h1>
-            <p class="panel__sub">Official access for barangay records and requests</p>
+            <h1 class="panel__title">Official Login</h1>
+            <p class="panel__sub">Captain, Secretary, Treasurer, and Kagawad access</p>
           </div>
 
           <?php if ($error !== ''): ?>
@@ -256,7 +276,7 @@ $csrf = bms_csrf_token('admin_login_csrf');
 
           <div class="official-note">
             <strong>Official portal</strong>
-            Secretary accounts use email and password only. Google sign-in is for resident accounts.
+            Official accounts use email and password only. Google sign-in is for resident accounts.
           </div>
 
           <form method="post" novalidate>
@@ -267,7 +287,7 @@ $csrf = bms_csrf_token('admin_login_csrf');
                 <label class="form-label" for="email">
                   <i class="fa-regular fa-envelope"></i> Email
                 </label>
-                <input class="form-input" id="email" name="email" type="email" value="<?= admin_login_e($email) ?>" placeholder="secretary@example.com" autocomplete="email" required />
+                <input class="form-input" id="email" name="email" type="email" value="<?= admin_login_e($email) ?>" placeholder="official@example.com" autocomplete="email" required />
               </div>
 
               <div class="form-group">
