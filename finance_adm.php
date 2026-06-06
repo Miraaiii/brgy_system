@@ -417,209 +417,6 @@ foreach ($expenditures as $row) {
     $totalAmount += $row['amount'];
 }
 
-// ── Config ──────────────────────────────────────────────────────────────
-$APPROVAL_THRESHOLD = 5000;          // configurable
-$UPLOAD_DIR         = 'uploads/expenditures/';
-$MAX_FILE_SIZE      = 5 * 1024 * 1024; // 5 MB
-
-$errors  = [];
-$success = false;
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-
-    // ── Sanitise & validate inputs ──────────────────────────────────────
-    $category          = trim($_POST['category']          ?? '');
-    $description       = trim($_POST['description']       ?? '');
-    $amount            = $_POST['amount']                 ?? '';
-    $disbursement_date = trim($_POST['disbursement_date'] ?? '');
-    $payee             = trim($_POST['payee']             ?? '');
-    $notes             = trim($_POST['notes']             ?? '');
-    $recorded_by       = $_SESSION['user_id']             ?? null;
-
-    $allowed_categories = ['Personnel','Supplies','Infrastructure','Events','Maintenance','Other'];
-
-    if (!in_array($category, $allowed_categories))           $errors[] = 'Invalid category selected.';
-    if ($description === '')                                  $errors[] = 'Description is required.';
-    if (!is_numeric($amount) || (float)$amount <= 0)         $errors[] = 'Amount must be a number greater than 0.';
-    if (!$disbursement_date || !strtotime($disbursement_date)) $errors[] = 'Invalid disbursement date.';
-    if ($payee === '')                                        $errors[] = 'Payee is required.';
-
-    $amount = (float)$amount;
-
-    // ── File upload ─────────────────────────────────────────────────────
-    $supporting_doc_path = null;
-
-    if (!empty($_FILES['supporting_doc']['name'])) {
-        $file      = $_FILES['supporting_doc'];
-        $allowed   = ['image/jpeg','image/png','application/pdf'];
-        $ext_map   = ['image/jpeg'=>'jpg','image/png'=>'png','application/pdf'=>'pdf'];
-        $mime      = mime_content_type($file['tmp_name']);
-
-        if (!in_array($mime, $allowed)) {
-            $errors[] = 'Supporting document must be JPG, PNG, or PDF.';
-        } elseif ($file['size'] > $MAX_FILE_SIZE) {
-            $errors[] = 'Supporting document must not exceed 5 MB.';
-        } else {
-            if (!is_dir($UPLOAD_DIR)) mkdir($UPLOAD_DIR, 0755, true);
-            $filename            = uniqid('doc_', true) . '.' . $ext_map[$mime];
-            $supporting_doc_path = $UPLOAD_DIR . $filename;
-            if (!move_uploaded_file($file['tmp_name'], $supporting_doc_path)) {
-                $errors[] = 'File upload failed. Please try again.';
-                $supporting_doc_path = null;
-            }
-        }
-    }
-
-    // ── Persist to DB ───────────────────────────────────────────────────
-    if (empty($errors)) {
-        // approved_by left NULL until Captain approves
-        $sql = "INSERT INTO expenditures
-                    (category, description, amount, disbursement_date, payee, supporting_doc_path, recorded_by)
-                VALUES (?,?,?,?,?,?,?)";
-
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([
-            $category,
-            $description,
-            $amount,
-            $disbursement_date,
-            $payee,
-            $supporting_doc_path,
-            $recorded_by
-        ]);
-
-        // ── Approval threshold rule ─────────────────────────────────────
-        $new_id = $pdo->lastInsertId();
-        if ($amount < $APPROVAL_THRESHOLD) {
-            $pdo->prepare("UPDATE expenditures SET status='Approved', approved_by=? WHERE id=?")
-                ->execute([$recorded_by, $new_id]);
-            $toast_msg  = 'Expenditure recorded and auto-approved.';
-            $toast_type = 'success';
-        } else {
-            $pdo->prepare("UPDATE expenditures SET status='Pending Captain Approval' WHERE id=?")
-                ->execute([$new_id]);
-            $toast_msg  = 'Expenditure submitted — pending Captain approval.';
-            $toast_type = 'pending';
-        }
-
-        $success = true;
-    }
-}
-
-// ── Default date = today ────────────────────────────────────────────────
-$default_date = date('Y-m-d');
-
-/* ── Fiscal year ─────────────────────────────────────────────────── */
-$fiscal_year = isset($_GET['fy']) ? (int)$_GET['fy'] : (int)date('Y');
-$min_year    = 2020;
-$max_year    = (int)date('Y') + 1;
- 
-/* ── AJAX / POST actions ─────────────────────────────────────────── */
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['_bud_action'])) {
-    header('Content-Type: application/json');
- 
-    $action = $_POST['_bud_action'];
- 
-    /* ── Add budget item ─────────────────────────────────────────── */
-    if ($action === 'add') {
-        $category         = trim($_POST['category']         ?? '');
-        $description      = trim($_POST['description']      ?? '');
-        $allocated_amount = (float)($_POST['allocated_amount'] ?? 0);
-        $fy               = (int)($_POST['fiscal_year']     ?? date('Y'));
- 
-        $allowed = ['Personnel','Supplies','Infrastructure','Events','Maintenance','Other'];
-        if (!in_array($category, $allowed))          { echo json_encode(['success'=>false,'message'=>'Invalid category.']); exit; }
-        if ($allocated_amount <= 0)                   { echo json_encode(['success'=>false,'message'=>'Amount must be greater than 0.']); exit; }
- 
-        // Prevent duplicate category in same fiscal year
-        $chk = $pdo->prepare("SELECT id FROM budget_items WHERE category=? AND fiscal_year=?");
-        $chk->execute([$category, $fy]);
-        if ($chk->fetch()) { echo json_encode(['success'=>false,'message'=>'This category already has a budget line for '.$fy.'.']); exit; }
- 
-        $stmt = $pdo->prepare("INSERT INTO budget_items (category, description, allocated_amount, fiscal_year) VALUES (?,?,?,?)");
-        $stmt->execute([$category, $description, $allocated_amount, $fy]);
-        echo json_encode(['success'=>true,'message'=>'Budget item added.','id'=>$pdo->lastInsertId()]);
-        exit;
-    }
- 
-    /* ── Edit budget item ────────────────────────────────────────── */
-    if ($action === 'edit') {
-        $id               = (int)($_POST['id']               ?? 0);
-        $allocated_amount = (float)($_POST['allocated_amount'] ?? 0);
-        $description      = trim($_POST['description']       ?? '');
- 
-        if ($id <= 0)             { echo json_encode(['success'=>false,'message'=>'Invalid item.']); exit; }
-        if ($allocated_amount <= 0){ echo json_encode(['success'=>false,'message'=>'Amount must be greater than 0.']); exit; }
- 
-        $stmt = $pdo->prepare("UPDATE budget_items SET allocated_amount=?, description=? WHERE id=?");
-        $stmt->execute([$allocated_amount, $description, $id]);
-        echo json_encode(['success'=>true,'message'=>'Budget item updated.']);
-        exit;
-    }
- 
-    /* ── Delete budget item ──────────────────────────────────────── */
-    if ($action === 'delete') {
-        $id = (int)($_POST['id'] ?? 0);
-        if ($id <= 0) { echo json_encode(['success'=>false,'message'=>'Invalid item.']); exit; }
- 
-        // Only delete if no expenditures are linked
-        $row   = $pdo->prepare("SELECT category, fiscal_year FROM budget_items WHERE id=?");
-        $row->execute([$id]);
-        $item  = $row->fetch(PDO::FETCH_ASSOC);
-        if (!$item) { echo json_encode(['success'=>false,'message'=>'Item not found.']); exit; }
- 
-        $spent = $pdo->prepare("SELECT COUNT(*) FROM expenditures WHERE category=? AND YEAR(disbursement_date)=?");
-        $spent->execute([$item['category'], $item['fiscal_year']]);
-        if ($spent->fetchColumn() > 0) {
-            echo json_encode(['success'=>false,'message'=>'Cannot delete: expenditures are linked to this budget line.']);
-            exit;
-        }
- 
-        $pdo->prepare("DELETE FROM budget_items WHERE id=?")->execute([$id]);
-        echo json_encode(['success'=>true,'message'=>'Budget item deleted.']);
-        exit;
-    }
- 
-    echo json_encode(['success'=>false,'message'=>'Unknown action.']);
-    exit;
-}
- 
-/* ── Budget items with spent amounts ────────────────────────────── */
-$items_stmt = $pdo->prepare("
-    SELECT b.id, b.category, b.description, b.allocated_amount,
-           COALESCE(SUM(e.amount), 0) AS spent,
-           b.allocated_amount - COALESCE(SUM(e.amount), 0) AS remaining,
-           ROUND(COALESCE(SUM(e.amount),0) / b.allocated_amount * 100, 1) AS pct_used
-    FROM budget_items b
-    LEFT JOIN expenditures e
-           ON e.category = b.category
-          AND YEAR(e.disbursement_date) = b.fiscal_year
-    WHERE b.fiscal_year = ?
-    GROUP BY b.id
-    ORDER BY b.category
-");
-$items_stmt->execute([$fiscal_year]);
-$budget_items = $items_stmt->fetchAll(PDO::FETCH_ASSOC);
- 
-/* ── Total budget vs total spent ─────────────────────────────────── */
-$totals_stmt = $pdo->prepare("
-    SELECT SUM(b.allocated_amount) AS total_budget,
-           COALESCE(SUM(e.amount), 0) AS total_spent
-    FROM budget_items b
-    LEFT JOIN expenditures e
-           ON YEAR(e.disbursement_date) = b.fiscal_year
-    WHERE b.fiscal_year = ?
-");
-$totals_stmt->execute([$fiscal_year]);
-$totals = $totals_stmt->fetch(PDO::FETCH_ASSOC);
- 
-$total_budget    = (float)($totals['total_budget'] ?? 0);
-$total_spent     = (float)($totals['total_spent']  ?? 0);
-$total_remaining = $total_budget - $total_spent;
-$total_pct       = $total_budget > 0 ? round($total_spent / $total_budget * 100, 1) : 0;
- 
-$categories = ['Personnel','Supplies','Infrastructure','Events','Maintenance','Other'];
-
 $office_address = 'Brgy. Sta. Rosa 1, Noveleta, Cavite';
 $contact_number = '+63 912 000 0000';
 $barangay_hotline = 'Emergency Hotline 911';
@@ -685,7 +482,228 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet" />
   <link rel="stylesheet" href="assets/css/resident_dashboard.css" />
   <link rel="stylesheet" href="assets/css/finance.css">
-  
+
+  <!-- ── Expenditures section: theme-aware overrides ─────────────────────────
+       All exp-* colours are mapped to the app's root tokens so they respond
+       to body.dark-mode automatically. No hardcoded light-only values here.
+  ─────────────────────────────────────────────────────────────────────────── -->
+  <style>
+  /* ── Remap exp-* onto app tokens ── */
+  .exp-wrap,
+  .exp-card,
+  .exp-modal,
+  .exp-subtotals,
+  .exp-modal-bg {
+    --exp-bg:         var(--bg);
+    --exp-surface:    var(--surface);
+    --exp-surface2:   var(--surface2);
+    --exp-border:     var(--border);
+    --exp-ink:        var(--text);
+    --exp-muted:      var(--muted, #6b7a99);
+    --exp-accent:     var(--accent, #f0c040);
+    --exp-accent-lt:  rgba(240,192,64,.12);
+    --exp-green:      var(--accent2, #3dd68c);
+    --exp-green-lt:   rgba(61,214,140,.13);
+    --exp-yellow:     var(--accent, #f0c040);
+    --exp-yellow-lt:  rgba(240,192,64,.13);
+    --exp-grey:       var(--text2, #a0aabf);
+    --exp-grey-lt:    var(--surface2);
+    --exp-shadow:     0 1px 4px rgba(0,0,0,.35), 0 4px 16px rgba(0,0,0,.25);
+    color:            var(--exp-ink);
+    font-family:      "Plus Jakarta Sans", system-ui, sans-serif;
+  }
+
+  /* ── Layout ── */
+  .exp-wrap      { color: var(--exp-ink); }
+  .exp-title     { font-size:1.25rem; font-weight:700; letter-spacing:-.3px; margin:0; color:var(--exp-ink); }
+  .exp-title small{ font-size:.8rem; font-weight:500; color:var(--exp-muted); display:block; margin-top:2px; }
+  .exp-header    { display:flex; align-items:center; justify-content:space-between;
+                   flex-wrap:wrap; gap:12px; margin-bottom:20px; }
+
+  /* ── Controls ── */
+  .exp-controls        { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:18px; align-items:flex-end; }
+  .exp-control-group   { display:flex; flex-direction:column; gap:4px; }
+  .exp-control-group label {
+    font-size:.72rem; font-weight:600; color:var(--exp-muted);
+    text-transform:uppercase; letter-spacing:.5px;
+  }
+
+  .exp-input,
+  .exp-select {
+    height:38px; padding:0 12px;
+    border:1.5px solid var(--exp-border);
+    border-radius:6px;
+    font-family:inherit; font-size:.875rem;
+    color:var(--exp-ink);
+    background:var(--exp-surface2);
+    transition:border-color .15s, box-shadow .15s;
+    outline:none;
+  }
+  .exp-input:focus,
+  .exp-select:focus {
+    border-color:var(--exp-accent);
+    box-shadow:0 0 0 3px rgba(240,192,64,.18);
+  }
+  .exp-search {
+    width:230px; padding-left:36px;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7a99' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E");
+    background-repeat:no-repeat; background-position:10px center;
+  }
+
+  /* ── Category tabs ── */
+  .exp-cat-tabs  { display:flex; gap:4px; flex-wrap:wrap; }
+  .exp-cat-tab   {
+    padding:5px 12px; border-radius:20px;
+    border:1.5px solid var(--exp-border);
+    background:var(--exp-surface2);
+    font-size:.8rem; font-weight:600; color:var(--exp-muted);
+    cursor:pointer; text-decoration:none; transition:all .15s; white-space:nowrap;
+  }
+  .exp-cat-tab:hover  { border-color:var(--exp-accent); color:var(--exp-accent); }
+  .exp-cat-tab.active { background:var(--exp-accent); border-color:var(--exp-accent); color:#111; }
+
+  /* ── Buttons ── */
+  .exp-btn {
+    display:inline-flex; align-items:center; gap:6px; height:38px;
+    padding:0 16px; border-radius:6px; border:none;
+    font-family:inherit; font-size:.875rem; font-weight:600;
+    cursor:pointer; text-decoration:none; transition:all .15s; white-space:nowrap;
+  }
+  .exp-btn--primary { background:var(--exp-accent); color:#111; }
+  .exp-btn--primary:hover { filter:brightness(1.1); transform:translateY(-1px); box-shadow:0 4px 14px rgba(240,192,64,.3); }
+  .exp-btn--ghost   {
+    background:transparent; color:var(--exp-muted);
+    border:1.5px solid var(--exp-border);
+  }
+  .exp-btn--ghost:hover { background:var(--exp-surface2); color:var(--exp-ink); }
+  .exp-btn--sm      { height:30px; padding:0 10px; font-size:.78rem; }
+  .exp-btn--icon    { padding:0 10px; }
+
+  /* ── Card / Table ── */
+  .exp-card        { background:var(--exp-surface); border:1px solid var(--exp-border); border-radius:10px; box-shadow:var(--exp-shadow); overflow:hidden; }
+  .exp-table-wrap  { overflow-x:auto; }
+  .exp-table       { width:100%; border-collapse:collapse; font-size:.875rem; }
+  .exp-table thead tr   { background:var(--exp-surface2); }
+  .exp-table th    { padding:11px 14px; text-align:left; font-size:.72rem; font-weight:700;
+                     color:var(--exp-muted); text-transform:uppercase; letter-spacing:.6px;
+                     border-bottom:1.5px solid var(--exp-border); white-space:nowrap; }
+  .exp-table td    { padding:12px 14px; border-bottom:1px solid var(--exp-border); vertical-align:middle; color:var(--exp-ink); }
+  .exp-table tbody tr:last-child td { border-bottom:none; }
+  .exp-table tbody tr:hover { background:var(--exp-surface2); }
+  .exp-table .col-amount  { font-weight:600; text-align:right; white-space:nowrap; }
+  .exp-table .col-actions { text-align:right; white-space:nowrap; }
+  .exp-table .col-date    { white-space:nowrap; }
+
+  /* ── Badges ── */
+  .exp-badge {
+    display:inline-flex; align-items:center; gap:5px;
+    padding:3px 9px; border-radius:20px; font-size:.72rem; font-weight:700; white-space:nowrap;
+  }
+  .exp-badge::before { content:''; width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+  .exp-badge--approved  { background:var(--exp-green-lt);  color:var(--exp-green); }
+  .exp-badge--approved::before  { background:var(--exp-green); }
+  .exp-badge--pending   { background:var(--exp-yellow-lt); color:var(--exp-yellow); }
+  .exp-badge--pending::before   { background:var(--exp-yellow); }
+  .exp-badge--disbursed { background:var(--exp-grey-lt);   color:var(--exp-grey); }
+  .exp-badge--disbursed::before { background:var(--exp-grey); }
+
+  /* ── Category pill ── */
+  .exp-cat-pill {
+    display:inline-flex; align-items:center; gap:5px; padding:3px 8px;
+    border-radius:6px; font-size:.75rem; font-weight:600;
+    background:var(--exp-accent-lt); color:var(--exp-accent);
+  }
+
+  /* ── Subtotals ── */
+  .exp-subtotals       { padding:14px 18px; border-top:2px solid var(--exp-border); background:var(--exp-surface2); }
+  .exp-subtotals h4    { margin:0 0 10px; font-size:.75rem; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--exp-muted); }
+  .exp-subtotals-grid  { display:flex; flex-wrap:wrap; gap:10px 24px; }
+  .exp-sub-item        { display:flex; align-items:baseline; gap:6px; font-size:.85rem; }
+  .exp-sub-label       { color:var(--exp-muted); }
+  .exp-sub-val         { font-weight:700; color:var(--exp-ink); }
+  .exp-sub-total       {
+    border-top:1.5px solid var(--exp-border); margin-top:10px; padding-top:10px;
+    display:flex; justify-content:flex-end; align-items:center; gap:10px; font-size:.875rem;
+  }
+  .exp-sub-total strong { font-size:1rem; color:var(--exp-accent); }
+
+  /* ── Meta row ── */
+  .exp-meta { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px; font-size:.825rem; color:var(--exp-muted); }
+  .exp-meta strong { color:var(--exp-ink); }
+
+  /* ── Empty state ── */
+  .exp-empty      { padding:60px 20px; text-align:center; color:var(--exp-muted); }
+  .exp-empty-icon { font-size:2.5rem; margin-bottom:12px; }
+  .exp-empty h3   { margin:0 0 6px; font-size:1rem; color:var(--exp-ink); }
+  .exp-empty p    { margin:0; font-size:.875rem; }
+
+  /* ── Modals ── */
+  .exp-modal-bg {
+    display:none; position:fixed; inset:0;
+    background:rgba(0,0,0,.65); backdrop-filter:blur(3px);
+    z-index:1000; align-items:center; justify-content:center; padding:20px;
+  }
+  .exp-modal-bg.open { display:flex; }
+  .exp-modal {
+    background:var(--exp-surface); border:1px solid var(--exp-border);
+    border-radius:10px; box-shadow:var(--exp-shadow);
+    width:100%; max-width:560px; max-height:90vh; overflow-y:auto;
+    animation:expModalIn .2s ease;
+  }
+  @keyframes expModalIn {
+    from { opacity:0; transform:translateY(16px) scale(.97); }
+    to   { opacity:1; transform:translateY(0)    scale(1); }
+  }
+  .exp-modal-header {
+    padding:18px 20px 14px; border-bottom:1px solid var(--exp-border);
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  .exp-modal-header h3 { margin:0; font-size:1rem; font-weight:700; color:var(--exp-ink); }
+  .exp-modal-close {
+    background:none; border:none; cursor:pointer; font-size:1.3rem;
+    color:var(--exp-muted); line-height:1; padding:2px 6px; border-radius:4px;
+  }
+  .exp-modal-close:hover { background:var(--exp-surface2); color:var(--exp-ink); }
+  .exp-modal-body  { padding:20px; }
+
+  /* ── Detail grid inside modal ── */
+  .exp-detail-grid  { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .exp-detail-item  { display:flex; flex-direction:column; gap:3px; }
+  .exp-detail-item.full { grid-column:1/-1; }
+  .exp-detail-label { font-size:.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--exp-muted); }
+  .exp-detail-val   { font-size:.9rem; color:var(--exp-ink); word-break:break-word; }
+  .exp-detail-val.mono { font-weight:700; font-size:1.1rem; color:var(--exp-accent); }
+
+  /* ── Approval history ── */
+  .exp-approval-hist    { margin-top:16px; padding-top:16px; border-top:1px solid var(--exp-border); }
+  .exp-approval-hist h4 { margin:0 0 10px; font-size:.75rem; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--exp-muted); }
+  .exp-hist-item        { display:flex; gap:10px; font-size:.85rem; margin-bottom:8px; color:var(--exp-ink); }
+  .exp-hist-dot         { width:8px; height:8px; border-radius:50%; margin-top:5px; flex-shrink:0; }
+  .exp-hist-dot--green  { background:var(--exp-green); }
+  .exp-hist-dot--yellow { background:var(--exp-yellow); }
+
+  /* ── Large-amount warning ── */
+  .exp-large-warn {
+    background:var(--exp-yellow-lt); border:1px solid rgba(240,192,64,.35);
+    border-radius:6px; padding:8px 12px; font-size:.8rem;
+    color:var(--exp-yellow); margin-top:12px; display:flex; gap:6px;
+  }
+
+  /* ── Add-modal inputs inherit surface ── */
+  #expAddModal .exp-input,
+  #expAddModal .exp-select {
+    background:var(--exp-surface2);
+    color:var(--exp-ink);
+    border-color:var(--exp-border);
+  }
+
+  @media (max-width:640px) {
+    .exp-search { width:100%; }
+    .exp-detail-grid { grid-template-columns:1fr; }
+    .exp-controls { gap:8px; }
+  }
+  </style>
+
   <style>
     .welcome-meta {
       display: flex;
@@ -820,17 +838,17 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
 
       <div class="sidebar-group">
         <span class="sidebar-section-label">EXPENDITURES</span>
-        <a class="sidebar-link <?= $tab === 'expenditures' ? 'is-active' : '' ?>" href="finance_ad.php?tab=expenditures">
+        <a class="sidebar-link" href="finance_ad.php?tab=expenditures">
           <i class="fa-solid fa-money-bill-wave"></i><span>All Expenditures</span>
         </a>
-        <a class="sidebar-link <?= $tab === 'add-exp' ? 'is-active' : '' ?>" href="finance_ad.php?tab=add-exp">
+        <a class="sidebar-link" href="finance_ad.php?tab=add-exp">
           <i class="fa-solid fa-circle-plus"></i><span>Add Expenditure</span>
         </a>
       </div>
 
       <div class="sidebar-group">
         <span class="sidebar-section-label">BUDGET</span>
-        <a class="sidebar-link <?= $tab === 'budget' ? 'is-active' : '' ?>" href="finance_ad.php?tab=budget">
+        <a class="sidebar-link" href="finance_ad.php?tab=budget">
           <i class="fa-solid fa-chart-pie"></i><span>Budget Management</span>
         </a>
       </div>
@@ -1368,7 +1386,7 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
                       <span class="col-no-res">— Walk-in —</span>
                     <?php endif; ?>
                   </td>
-                  <td style="color:#64748b; max-width:180px; font-size:13px;">
+                  <td style="color:var(--muted,#6b7a99); max-width:180px; font-size:13px;">
                     <?= col_sanitize($row['description'] ?? '—') ?>
                   </td>
                   <td class="col-amt"><?= col_currency((float)$row['amount']) ?></td>
@@ -1617,8 +1635,8 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
         <div id="colToast"></div>
       </main>
 
-    <?php elseif ($tab === 'expenditures'): ?>
-      <main class="resident-main" id="expenditures">
+    <?php elseif ($tab === 'receipts'): ?>
+      <main class="resident-main" id="receipts">
         <section class="col-section">
           <div class="exp-header">
             <h2 class="exp-title">
@@ -1739,7 +1757,7 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
                                               <?= htmlspecialchars($row['description']) ?>
                                           </span>
                                           <?php if ($isLarge): ?>
-                                              <span style="font-size:.68rem;color:#b45309;font-weight:600;">⚠ Requires Captain Approval</span>
+                                              <span style="font-size:.68rem;color:var(--accent,#f0c040);font-weight:600;">⚠ Requires Captain Approval</span>
                                           <?php endif; ?>
                                       </td>
   
@@ -1811,436 +1829,6 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
         <!-- Toast -->
         <div id="colToast"></div>
       </main>
-
-    <?php elseif ($tab === 'add-exp'): ?>
-      <main class="resident-main" id="add-exp">
-        <section class="col-section">
-          <?php if ($success): ?>
-          <script>
-            document.addEventListener('DOMContentLoaded', function () {
-              showToast('<?= addslashes($toast_msg) ?>', '<?= $toast_type ?>');
-            });
-          </script>
-          <?php endif; ?>
-
-          <?php if (!empty($errors)): ?>
-            <div class="form-alert" style="
-              background: rgba(255,94,94,0.1);
-              border: 1px solid rgba(255,94,94,0.3);
-              border-radius: 10px;
-              padding: 12px 16px;
-              margin-bottom: 20px;
-              font-size: 13px;
-              color: var(--danger);
-            ">
-              <strong>Please fix the following:</strong>
-              <ul style="margin: 8px 0 0; padding-left: 18px;">
-                <?php foreach ($errors as $e): ?>
-                  <li><?= htmlspecialchars($e) ?></li>
-                <?php endforeach; ?>
-              </ul>
-            </div>
-          <?php endif; ?>
-
-          <div class="form-header">
-            <h2>Record Expenditure</h2>
-            <p>Fill in all required fields. Supporting documents are recommended for audit purposes.</p>
-          </div>
-
-          <div class="threshold-note">
-            <span class="icon">⚡</span>
-            <span>
-              Expenditures below <strong>₱<?= number_format($APPROVAL_THRESHOLD) ?></strong> are <strong>auto-approved</strong>.
-              Those at or above <strong>₱<?= number_format($APPROVAL_THRESHOLD) ?></strong> are flagged as
-              <em>Pending Captain Approval</em> and routed to the Captain's dashboard.
-            </span>
-          </div>
-
-          <form method="POST" enctype="multipart/form-data" id="expForm" novalidate>
-
-            <div class="card">
-              <div class="card-label">Expenditure Details</div>
-
-              <div class="field">
-                <label for="category">Category <span class="req">*</span></label>
-                <select id="category" name="category" required>
-                  <option value="" disabled <?= empty($_POST['category']) ? 'selected' : '' ?>>Select a category</option>
-                  <?php foreach (['Personnel','Supplies','Infrastructure','Events','Maintenance','Other'] as $cat): ?>
-                    <option value="<?= $cat ?>" <?= (($_POST['category'] ?? '') === $cat) ? 'selected' : '' ?>>
-                      <?= $cat ?>
-                    </option>
-                  <?php endforeach; ?>
-                </select>
-              </div>
-
-              <div class="field">
-                <label for="description">
-                  Description <span class="req">*</span>
-                  <span class="hint">e.g. "Office supplies for barangay hall"</span>
-                </label>
-                <textarea id="description" name="description" placeholder="Be specific about what the expense covers…" required><?= htmlspecialchars($_POST['description'] ?? '') ?></textarea>
-              </div>
-
-              <div class="field-row">
-                <div class="field">
-                  <label for="amount">Amount (₱) <span class="req">*</span></label>
-                  <div class="prefix-wrap">
-                    <span class="prefix">₱</span>
-                    <input type="number" id="amount" name="amount"
-                          min="0.01" step="0.01" placeholder="0.00"
-                          value="<?= htmlspecialchars($_POST['amount'] ?? '') ?>" required>
-                  </div>
-                </div>
-                <div class="field">
-                  <label for="disbursement_date">Disbursement Date <span class="req">*</span></label>
-                  <input type="date" id="disbursement_date" name="disbursement_date"
-                        value="<?= htmlspecialchars($_POST['disbursement_date'] ?? $default_date) ?>" required>
-                </div>
-              </div>
-
-              <div class="field">
-                <label for="payee">
-                  Payee <span class="req">*</span>
-                  <span class="hint">e.g. "Juan dela Cruz" or "ABC Supplies"</span>
-                </label>
-                <input type="text" id="payee" name="payee"
-                      placeholder="Name of person or company paid"
-                      value="<?= htmlspecialchars($_POST['payee'] ?? '') ?>" required>
-              </div>
-            </div>
-
-            <div class="card">
-              <div class="card-label">Documents & Notes</div>
-
-              <div class="field">
-                <label>Supporting Document <span class="hint">Receipt, invoice, or quotation</span></label>
-                <div class="upload-zone" id="uploadZone">
-                  <input type="file" id="supporting_doc" name="supporting_doc" accept=".jpg,.jpeg,.png,.pdf">
-                  <div class="up-icon">📎</div>
-                  <div class="up-label"><strong>Click to upload</strong> or drag &amp; drop</div>
-                  <div class="up-sub">JPG, PNG, or PDF — max 5 MB</div>
-                </div>
-                <div id="fileChosen" style="font-size:12px;color:var(--accent2);margin-top:6px;display:none;"></div>
-              </div>
-
-              <div class="field">
-                <label for="notes">Notes <span class="hint">Optional</span></label>
-                <textarea id="notes" name="notes"
-                          placeholder="Any additional context or remarks…"
-                          style="min-height:66px;"><?= htmlspecialchars($_POST['notes'] ?? '') ?></textarea>
-              </div>
-            </div>
-
-            <div class="approval-badge" id="approvalBadge"></div>
-
-            <div class="submit-row">
-              <button type="button" class="btn-cancel" onclick="history.back()">Cancel</button>
-              <button type="submit" class="btn-submit" id="submitBtn">Submit Expenditure</button>
-            </div>
-
-          </form>
-        </section><!-- /col-section -->
-
-        <!-- Toast -->
-        <div id="colToast"></div>
-      </main>
-
-    <?php elseif ($tab === 'budget'): ?>
-      <main class="resident-main" id="budget">
-        <!-- paste the <section class="col-section"> block here -->
-        <section class="col-section">
-          <div class="bud-header">
-            <div>
-              <h2 class="bud-title">Budget Overview</h2>
-              <p class="bud-sub">Annual budget allocation and expenditure tracking</p>
-            </div>
-            <div class="bud-header-actions">
-              <form method="GET" id="fyForm" style="display:flex;align-items:center;gap:8px;">
-                <input type="hidden" name="tab" value="budget">
-                <label for="fySelect" class="bud-fy-label">Fiscal Year</label>
-                <select id="fySelect" name="fy" class="bud-select" onchange="document.getElementById('fyForm').submit()">
-                  <?php for ($y = $max_year; $y >= $min_year; $y--): ?>
-                    <option value="<?= $y ?>" <?= $y === $fiscal_year ? 'selected' : '' ?>><?= $y ?></option>
-                  <?php endfor; ?>
-                </select>
-              </form>
-              <button class="bud-btn-primary" onclick="budOpenAdd()">
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-                Add Budget Item
-              </button>
-              <button class="bud-btn-outline" onclick="budExportPDF()">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-                Export PDF
-              </button>
-            </div>
-          </div>
-      
-          <?php if (empty($budget_items)): ?>
-          <!-- ── Empty state ────────────────────────────────────────── -->
-          <div class="bud-empty">
-            <div class="bud-empty-icon">📋</div>
-            <div class="bud-empty-title">No budget items for <?= $fiscal_year ?></div>
-            <div class="bud-empty-sub">Set up the annual budget by adding category allocations.</div>
-            <button class="bud-btn-primary" style="margin-top:16px;" onclick="budOpenAdd()">
-              <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-              Add First Budget Item
-            </button>
-          </div>
-          <?php else: ?>
-      
-          <!-- ── Summary cards ─────────────────────────────────────── -->
-          <div class="bud-summary-grid">
-            <div class="bud-summary-card">
-              <div class="bud-summary-label">Total Allocated</div>
-              <div class="bud-summary-val">₱<?= number_format($total_budget, 2) ?></div>
-              <div class="bud-summary-sub"><?= $fiscal_year ?> fiscal year</div>
-            </div>
-            <div class="bud-summary-card bud-summary-card--spent">
-              <div class="bud-summary-label">Total Spent</div>
-              <div class="bud-summary-val">₱<?= number_format($total_spent, 2) ?></div>
-              <div class="bud-summary-sub"><?= $total_pct ?>% of budget used</div>
-            </div>
-            <div class="bud-summary-card bud-summary-card--rem">
-              <div class="bud-summary-label">Remaining Balance</div>
-              <div class="bud-summary-val <?= $total_remaining < 0 ? 'bud-over' : '' ?>">
-                <?= $total_remaining < 0 ? '-' : '' ?>₱<?= number_format(abs($total_remaining), 2) ?>
-              </div>
-              <div class="bud-summary-sub"><?= $total_remaining < 0 ? 'Over budget' : 'Available to spend' ?></div>
-            </div>
-          </div>
-      
-          <!-- ── Utilization chart ──────────────────────────────────── -->
-          <div class="bud-card">
-            <div class="bud-card-title">Budget Utilization by Category</div>
-            <div class="bud-chart-list">
-              <?php foreach ($budget_items as $item):
-                $pct     = min((float)$item['pct_used'], 100);
-                $over    = (float)$item['remaining'] < 0;
-                $barCls  = $over ? 'bud-bar--over' : ($pct >= 85 ? 'bud-bar--warn' : 'bud-bar--ok');
-              ?>
-              <div class="bud-chart-row">
-                <div class="bud-chart-meta">
-                  <span class="bud-chart-cat"><?= htmlspecialchars($item['category']) ?></span>
-                  <span class="bud-chart-pct <?= $over ? 'bud-over' : '' ?>"><?= $item['pct_used'] ?>%</span>
-                </div>
-                <div class="bud-bar-track">
-                  <div class="bud-bar <?= $barCls ?>" style="width:<?= $pct ?>%"></div>
-                </div>
-                <div class="bud-chart-amounts">
-                  <span>₱<?= number_format($item['spent'], 2) ?> spent</span>
-                  <span>of ₱<?= number_format($item['allocated_amount'], 2) ?></span>
-                </div>
-              </div>
-              <?php endforeach; ?>
-            </div>
-          </div>
-      
-          <!-- ── Budget items table ─────────────────────────────────── -->
-          <div class="bud-card">
-            <div class="bud-card-title">Budget Line Items</div>
-            <div class="bud-table-wrap">
-              <table class="bud-table">
-                <thead>
-                  <tr>
-                    <th>Category</th>
-                    <th>Description</th>
-                    <th class="ta-r">Allocated</th>
-                    <th class="ta-r">Spent</th>
-                    <th class="ta-r">Remaining</th>
-                    <th class="ta-r">% Used</th>
-                    <th class="ta-c">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <?php foreach ($budget_items as $item):
-                    $rem_cls = (float)$item['remaining'] < 0 ? 'bud-over' : ((float)$item['remaining'] < ($item['allocated_amount'] * 0.1) ? 'bud-warn' : '');
-                  ?>
-                  <tr data-bud-id="<?= $item['id'] ?>">
-                    <td><span class="bud-cat-badge"><?= htmlspecialchars($item['category']) ?></span></td>
-                    <td class="bud-desc"><?= htmlspecialchars($item['description'] ?: '—') ?></td>
-                    <td class="ta-r">₱<?= number_format($item['allocated_amount'], 2) ?></td>
-                    <td class="ta-r">₱<?= number_format($item['spent'], 2) ?></td>
-                    <td class="ta-r <?= $rem_cls ?>">
-                      <?= (float)$item['remaining'] < 0 ? '-' : '' ?>₱<?= number_format(abs($item['remaining']), 2) ?>
-                    </td>
-                    <td class="ta-r">
-                      <span class="bud-pct-pill <?= (float)$item['pct_used'] >= 100 ? 'bud-pct-pill--over' : ((float)$item['pct_used'] >= 85 ? 'bud-pct-pill--warn' : '') ?>">
-                        <?= $item['pct_used'] ?>%
-                      </span>
-                    </td>
-                    <td class="ta-c">
-                      <button class="bud-icon-btn" title="Edit"
-                        onclick="budOpenEdit(<?= $item['id'] ?>, '<?= htmlspecialchars(addslashes($item['category'])) ?>', <?= $item['allocated_amount'] ?>, '<?= htmlspecialchars(addslashes($item['description'])) ?>')">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                      </button>
-                      <button class="bud-icon-btn bud-icon-btn--del" title="Delete"
-                        onclick="budOpenDelete(<?= $item['id'] ?>, '<?= htmlspecialchars(addslashes($item['category'])) ?>', <?= (float)$item['spent'] ?>)">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-                      </button>
-                    </td>
-                  </tr>
-                  <?php endforeach; ?>
-                </tbody>
-                <tfoot>
-                  <tr class="bud-tfoot">
-                    <td colspan="2"><strong>Total</strong></td>
-                    <td class="ta-r"><strong>₱<?= number_format($total_budget, 2) ?></strong></td>
-                    <td class="ta-r"><strong>₱<?= number_format($total_spent, 2) ?></strong></td>
-                    <td class="ta-r <?= $total_remaining < 0 ? 'bud-over' : '' ?>">
-                      <strong><?= $total_remaining < 0 ? '-' : '' ?>₱<?= number_format(abs($total_remaining), 2) ?></strong>
-                    </td>
-                    <td class="ta-r"><strong><?= $total_pct ?>%</strong></td>
-                    <td></td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          </div>
-          <?php endif; ?>
-        </section><!-- /col-section -->
-
-        <!-- Toast -->
-        <div id="colToast"></div>
-      </main>
-
-      <!-- Add Modal -->
-      <div class="col-backdrop" id="budAddModal">
-        <div class="bud-modal">
-          <div class="bud-modal-hd">
-            <span>Add Budget Item</span>
-            <button class="bud-modal-close" onclick="colCloseModal('budAddModal')">×</button>
-          </div>
-          <div class="bud-modal-body">
-            <input type="hidden" id="budAddFY" value="<?= $fiscal_year ?>">
-            <div class="bud-field">
-              <label>Category <span class="req">*</span></label>
-              <select id="budAddCategory">
-                <option value="" disabled selected>Select category</option>
-                <?php foreach ($categories as $cat): ?>
-                  <option value="<?= $cat ?>"><?= $cat ?></option>
-                <?php endforeach; ?>
-              </select>
-              <div class="bud-err" id="budAddErrCat"></div>
-            </div>
-            <div class="bud-field">
-              <label>Description <span class="bud-opt">Optional</span></label>
-              <input type="text" id="budAddDescription" placeholder="e.g. Salaries and wages">
-            </div>
-            <div class="bud-field">
-              <label>Allocated Amount (₱) <span class="req">*</span></label>
-              <div class="bud-prefix-wrap">
-                <span class="bud-prefix">₱</span>
-                <input type="number" id="budAddAmount" min="0.01" step="0.01" placeholder="0.00">
-              </div>
-              <div class="bud-err" id="budAddErrAmt"></div>
-            </div>
-          </div>
-          <div class="bud-modal-ft">
-            <button class="bud-btn-ghost" onclick="colCloseModal('budAddModal')">Cancel</button>
-            <button class="bud-btn-primary" id="budAddSubmitBtn" onclick="budSubmitAdd()">Add Item</button>
-          </div>
-        </div>
-      </div>
-      
-      <!-- Edit Modal -->
-      <div class="col-backdrop" id="budEditModal">
-        <div class="bud-modal">
-          <div class="bud-modal-hd">
-            <span>Edit Budget Item</span>
-            <button class="bud-modal-close" onclick="colCloseModal('budEditModal')">×</button>
-          </div>
-          <div class="bud-modal-body">
-            <input type="hidden" id="budEditId">
-            <div class="bud-field">
-              <label>Category</label>
-              <input type="text" id="budEditCategory" disabled style="opacity:.6;cursor:not-allowed;">
-            </div>
-            <div class="bud-field">
-              <label>Description <span class="bud-opt">Optional</span></label>
-              <input type="text" id="budEditDescription" placeholder="e.g. Salaries and wages">
-            </div>
-            <div class="bud-field">
-              <label>Allocated Amount (₱) <span class="req">*</span></label>
-              <div class="bud-prefix-wrap">
-                <span class="bud-prefix">₱</span>
-                <input type="number" id="budEditAmount" min="0.01" step="0.01" placeholder="0.00">
-              </div>
-              <div class="bud-err" id="budEditErrAmt"></div>
-            </div>
-          </div>
-          <div class="bud-modal-ft">
-            <button class="bud-btn-ghost" onclick="colCloseModal('budEditModal')">Cancel</button>
-            <button class="bud-btn-primary" id="budEditSubmitBtn" onclick="budSubmitEdit()">Save Changes</button>
-          </div>
-        </div>
-      </div>
-      
-      <!-- Delete Modal -->
-      <div class="col-backdrop" id="budDeleteModal">
-        <div class="bud-modal bud-modal--sm">
-          <div class="bud-modal-hd">
-            <span>Delete Budget Item</span>
-            <button class="bud-modal-close" onclick="colCloseModal('budDeleteModal')">×</button>
-          </div>
-          <div class="bud-modal-body">
-            <input type="hidden" id="budDeleteId">
-            <p class="bud-confirm-text" id="budDeleteText"></p>
-          </div>
-          <div class="bud-modal-ft">
-            <button class="bud-btn-ghost" onclick="colCloseModal('budDeleteModal')">Cancel</button>
-            <button class="bud-btn-danger" id="budDeleteSubmitBtn" onclick="budSubmitDelete()">Delete</button>
-          </div>
-        </div>
-      </div>
-      
-      <!-- PDF Print area -->
-      <div id="budPrintArea" style="display:none;">
-        <style>
-          @media print {
-            body > *:not(#budPrintArea) { display: none !important; }
-            #budPrintArea { display: block !important; font-family: sans-serif; padding: 24px; color: #000; }
-            #budPrintArea table { width:100%; border-collapse:collapse; margin-top:12px; }
-            #budPrintArea th, #budPrintArea td { border:1px solid #ccc; padding:7px 10px; font-size:12px; }
-            #budPrintArea th { background:#f1f5f9; font-weight:700; }
-            #budPrintArea .ta-r { text-align:right; }
-          }
-        </style>
-        <h2 style="margin:0 0 4px;">Barangay Budget Plan — <?= $fiscal_year ?></h2>
-        <p style="margin:0 0 12px;font-size:13px;color:#64748b;">Generated: <?= date('F j, Y') ?></p>
-        <table>
-          <thead>
-            <tr>
-              <th>Category</th>
-              <th>Description</th>
-              <th class="ta-r">Allocated (₱)</th>
-              <th class="ta-r">Spent (₱)</th>
-              <th class="ta-r">Remaining (₱)</th>
-              <th class="ta-r">% Used</th>
-            </tr>
-          </thead>
-          <tbody>
-            <?php foreach ($budget_items as $item): ?>
-            <tr>
-              <td><?= htmlspecialchars($item['category']) ?></td>
-              <td><?= htmlspecialchars($item['description'] ?: '—') ?></td>
-              <td class="ta-r"><?= number_format($item['allocated_amount'], 2) ?></td>
-              <td class="ta-r"><?= number_format($item['spent'], 2) ?></td>
-              <td class="ta-r"><?= number_format($item['remaining'], 2) ?></td>
-              <td class="ta-r"><?= $item['pct_used'] ?>%</td>
-            </tr>
-            <?php endforeach; ?>
-          </tbody>
-          <tfoot>
-            <tr>
-              <td colspan="2"><strong>Total</strong></td>
-              <td class="ta-r"><strong><?= number_format($total_budget, 2) ?></strong></td>
-              <td class="ta-r"><strong><?= number_format($total_spent, 2) ?></strong></td>
-              <td class="ta-r"><strong><?= number_format($total_remaining, 2) ?></strong></td>
-              <td class="ta-r"><strong><?= $total_pct ?>%</strong></td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
     <?php endif; ?>
   </div>
 
@@ -2254,6 +1842,10 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
       const labels        = ['January', 'February', 'March', 'April', 'May', 'June'];
       const collections   = [82000, 95000, 110000, 143000, 162800, 187320];
       const expenditures  = [70000, 88000, 105000, 120000, 130000, 134200];
+
+      const textColor = getComputedStyle(document.body).getPropertyValue('--text').trim() || '#e8eaf0';
+      const mutedColor = getComputedStyle(document.body).getPropertyValue('--muted').trim() || '#6b7a99';
+      const gridColor  = 'rgba(255,255,255,0.06)';
 
       const ctx = document.getElementById('revenueChart').getContext('2d');
 
@@ -2309,7 +1901,7 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
           plugins: {
             legend: {
               labels: {
-                color: '#ccc',
+                color: textColor,
                 font: { size: 12 },
                 boxWidth: 14,
               }
@@ -2322,15 +1914,15 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
           },
           scales: {
             x: {
-              ticks: { color: '#aaa' },
-              grid:  { color: 'rgba(255,255,255,0.05)' }
+              ticks: { color: mutedColor },
+              grid:  { color: gridColor }
             },
             y: {
               ticks: {
-                color: '#aaa',
+                color: mutedColor,
                 callback: val => '₱' + (val / 1000) + 'K'
               },
-              grid: { color: 'rgba(255,255,255,0.07)' }
+              grid: { color: gridColor }
             }
           }
         }
@@ -2339,6 +1931,8 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
 
     // Donut Chart
     const doCtx = document.getElementById('donutChart').getContext('2d');
+    const doSurface = getComputedStyle(document.body).getPropertyValue('--surface').trim() || '#161a22';
+    const doText    = getComputedStyle(document.body).getPropertyValue('--text').trim()    || '#e8eaf0';
     new Chart(doCtx, {
     type: 'doughnut',
     data: {
@@ -2347,7 +1941,7 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
         data: [40, 30, 20, 10],
         backgroundColor: ['#3b82f6','#22c55e','#e8a020','#8b5cf6'],
         borderWidth: 2,
-        borderColor: '#ffffff',
+        borderColor: doSurface,
         hoverOffset: 6
         }]
     },
@@ -2358,8 +1952,8 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
         plugins: {
         legend: { display: false },
         tooltip: {
-            backgroundColor: '#1a2236',
-            titleColor: '#fff',
+            backgroundColor: doSurface,
+            titleColor: doText,
             bodyColor: '#e8a020',
             callbacks: { label: ctx => ' ' + ctx.label + ': ' + ctx.raw + '%' }
         }
@@ -2378,62 +1972,6 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
       recClearLinked();
       recClearErrors();
     }
-
-    /* Add Expenditures */
-    (function () {
-      const THRESHOLD = <?= (int)$APPROVAL_THRESHOLD ?>;
-
-      // Approval badge
-      const amountEl = document.getElementById('amount');
-      const badge    = document.getElementById('approvalBadge');
-
-      amountEl.addEventListener('input', function () {
-        const val = parseFloat(this.value);
-        if (!val || val <= 0) { badge.style.display = 'none'; return; }
-        badge.style.display = 'flex';
-        if (val < THRESHOLD) {
-          badge.className = 'approval-badge auto';
-          badge.innerHTML = '✅ This expenditure will be <strong style="margin-left:4px">auto-approved</strong> and recorded immediately.';
-        } else {
-          badge.className = 'approval-badge pending';
-          badge.innerHTML = '🕐 This expenditure requires <strong style="margin-left:4px">Captain approval</strong> before it is recorded.';
-        }
-      });
-
-      // File validation
-      document.getElementById('supporting_doc').addEventListener('change', function () {
-        const el = document.getElementById('fileChosen');
-        if (!this.files.length) return;
-        const f = this.files[0];
-        if (f.size > 5 * 1024 * 1024) {
-          showToast('File exceeds the 5 MB limit.', 'danger');
-          this.value = '';
-          el.style.display = 'none';
-          return;
-        }
-        el.textContent = '📄 ' + f.name;
-        el.style.display = 'block';
-      });
-
-      // Toast
-      window.showToast = function (msg, type = 'success') {
-        const colors = {
-          success: { bg: 'var(--accent2)', color: '#fff' },
-          pending: { bg: 'var(--accent)',  color: '#0d0f14' },
-          danger:  { bg: 'var(--danger)',  color: '#fff' },
-        };
-        const c = colors[type] || colors.success;
-        const t = document.createElement('div');
-        t.style.cssText = `
-          background:${c.bg}; color:${c.color};
-          padding:12px 18px; border-radius:10px; font-size:13px; font-weight:600;
-          margin-top:10px; box-shadow:0 4px 20px rgba(0,0,0,.3);
-        `;
-        t.textContent = msg;
-        document.getElementById('colToast').appendChild(t);
-        setTimeout(() => t.remove(), 3800);
-      };
-    })();
   </script>
 </body>
 </html>

@@ -133,7 +133,13 @@ function json_account_status($status, $email = '') {
 
 function dashboard_redirect_for_role($role) {
     $role = strtolower(trim((string)$role));
-    return $role === 'resident' ? 'portal/resident_dashboard.php' : 'dashboard.php';
+    return match($role) {
+        'resident'  => 'portal/resident_dashboard.php',
+        'treasurer' => 'finance_ad.php',
+        'admin'     => 'dashboard.php',
+        'secretary' => 'secretary.php',
+        default     => 'dashboard.php'
+    };
 }
 
 // 1. Google OAuth Callback (POST)
