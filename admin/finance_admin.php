@@ -1,7 +1,7 @@
 <?php
 
-include 'config/connection.php';
-include 'includes/auth_check.php';
+include '../config/connection.php';
+include '../includes/auth_check.php';
 
 if (!isset($_SESSION['user_id'])) {
     header("Location: ../login.php");
@@ -124,15 +124,20 @@ if (($_GET['tab'] ?? '') === 'collections' && ($_GET['export'] ?? '') === 'csv')
     exit;
 }
 
-// ── Filters ───────────────────────────────────────────────────────────────────
+$typeClause = '';
+$searchClause = '';
+
+/* Filters */
 $allowed    = ['all','document_fee','business_permit','cedula','other'];
 $sourceType = in_array($_GET['type'] ?? 'all', $allowed, true) ? ($_GET['type'] ?? 'all') : 'all';
-$dateFrom   = !empty($_GET['date_from']) ? date('Y-m-d', strtotime($_GET['date_from'])) : date('Y-m-01');
-$dateTo     = !empty($_GET['date_to'])   ? date('Y-m-d', strtotime($_GET['date_to']))   : date('Y-m-d');
-$search     = trim($_GET['search'] ?? '');
+$dateFrom = !empty($_GET['date_from'])
+    ? $_GET['date_from'] . " 00:00:00"
+    : date('Y-m-01 00:00:00');
 
-$params     = [':date_from' => $dateFrom, ':date_to' => $dateTo];
-$typeClause = $searchClause = '';
+$dateTo = !empty($_GET['date_to'])
+    ? $_GET['date_to'] . " 23:59:59"
+    : date('Y-m-d 23:59:59');
+$search     = trim($_GET['search'] ?? '');
 
 if ($sourceType !== 'all') {
     $typeClause = 'AND c.source_type = :source_type';
@@ -143,25 +148,45 @@ if ($search !== '') {
     $params[':search'] = '%' . $search . '%';
 }
 
-// ── Main query ────────────────────────────────────────────────────────────────
+$collections = [];
+
+$where = [];
+$params = [];
+
+$where[] = "c.collected_at BETWEEN :date_from AND :date_to";
+$params[':date_from'] = $dateFrom;
+$params[':date_to']   = $dateTo;
+
+if ($sourceType !== 'all') {
+    $where[] = "c.source_type = :source_type";
+    $params[':source_type'] = $sourceType;
+}
+
+if ($search !== '') {
+    $where[] = "(c.or_number LIKE :search
+              OR CONCAT(r.first_name,' ',r.last_name) LIKE :search)";
+    $params[':search'] = "%$search%";
+}
+
+$whereSQL = implode(" AND ", $where);
+
 $stmtList = $pdo->prepare("
-    SELECT   c.id,
-             c.or_number,
-             c.source_type,
-             c.amount,
-             c.description,
-             c.collected_at,
-             r.first_name,
-             r.last_name,
-             u.username AS collected_by_name
-    FROM     collections c
+    SELECT c.id,
+           c.or_number,
+           c.source_type,
+           c.amount,
+           c.description,
+           c.collected_at,
+           c.voided,
+           COALESCE(CONCAT(r.first_name, ' ', r.last_name), 'Walk-in') AS resident_name,
+           u.username AS collected_by_name
+    FROM collections c
     LEFT JOIN residents r ON r.id = c.resident_id
-    JOIN     users u      ON u.id = c.collected_by
-    WHERE    DATE(c.collected_at) BETWEEN :date_from AND :date_to
-             $typeClause
-             $searchClause
+    JOIN users u ON u.id = c.collected_by
+    WHERE $whereSQL
     ORDER BY c.collected_at DESC
 ");
+
 $stmtList->execute($params);
 $collections = $stmtList->fetchAll(PDO::FETCH_ASSOC);
 
@@ -209,7 +234,7 @@ function insert_collection(PDO $pdo, array $data, int $collected_by): bool {
 }
 
 // ── Export URL ────────────────────────────────────────────────────────────────
-$exportUrl = 'finance_ad.php?' . http_build_query([
+$exportUrl = 'finance_admin.php?' . http_build_query([
     'tab'       => 'collections',
     'export'    => 'csv',
     'type'      => $sourceType,
@@ -340,8 +365,13 @@ function getCategoryIcon(string $cat): string {
  
 // ─── Filter inputs ────────────────────────────────────────────────────────────
 $categoryFilter = $_GET['category']   ?? 'all';
-$dateFrom       = $_GET['date_from']  ?? date('Y-m-01');
-$dateTo         = $_GET['date_to']    ?? date('Y-m-t');
+$dateFrom = !empty($_GET['date_from'])
+    ? $_GET['date_from'] . " 00:00:00"
+    : date('Y-m-01 00:00:00');
+
+$dateTo = !empty($_GET['date_to'])
+    ? $_GET['date_to'] . " 23:59:59"
+    : date('Y-m-d 23:59:59');
 $searchQuery    = $_GET['search']     ?? '';
  
 $validCategories = ['all', 'Personnel', 'Supplies', 'Infrastructure', 'Events', 'Maintenance', 'Other'];
@@ -651,22 +681,143 @@ $fiscal_year           = 'Fiscal Year ' . date('Y');
 function e($val) { return htmlspecialchars((string)$val, ENT_QUOTES, 'UTF-8'); }
 function rd_date($val) { return date('M j, Y g:i A', strtotime($val)); }
 
-// --- STATIC DEMO DATA (replace with real DB queries later) ---
-$today_collections       = 12450.00;
-$month_collections       = 187320.50;
-$last_month_collections  = 162800.00;
-$month_expenditures      = 134200.75;
-$expenditure_threshold   = 150000.00; // threshold for "red" warning
-$net_balance             = $month_collections - $month_expenditures;
-$annual_budget           = 2000000.00;
-$ytd_spent               = 534200.75;
-$budget_utilization      = ($annual_budget > 0) ? ($ytd_spent / $annual_budget) * 100 : 0;
+$monthlyCollections = array_fill(0, 12, 0);
+$monthlyExpenditures = array_fill(0, 12, 0);
 
-// Month-over-month % change for collections
-$mom_change = ($last_month_collections > 0)
-    ? (($month_collections - $last_month_collections) / $last_month_collections) * 100
-    : 0;
+/* Collections */
+$stmt = $pdo->query("
+    SELECT
+        MONTH(collected_at) AS month_num,
+        SUM(amount) AS total
+    FROM collections
+    WHERE YEAR(collected_at) = YEAR(CURDATE())
+    GROUP BY MONTH(collected_at)
+");
+
+while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+    $monthlyCollections[$row['month_num'] - 1] = (float)$row['total'];
+}
+
+/* Collection Today */
+$stmt = $pdo->query("
+    SELECT COALESCE(SUM(amount),0)
+    FROM collections
+    WHERE DATE(collected_at) = CURDATE()
+");
+
+$today_collections = (float)$stmt->fetchColumn();
+
+/* Collection Per Month */
+$stmt = $pdo->query("
+    SELECT COALESCE(SUM(amount),0)
+    FROM collections
+    WHERE YEAR(collected_at) = YEAR(CURDATE())
+      AND MONTH(collected_at) = MONTH(CURDATE())
+");
+
+$month_collections = (float)$stmt->fetchColumn();
+
+/* Collection Last Month */
+$stmt = $pdo->query("
+    SELECT COALESCE(SUM(amount),0)
+    FROM collections
+    WHERE YEAR(collected_at) = YEAR(DATE_SUB(CURDATE(), INTERVAL 1 MONTH))
+      AND MONTH(collected_at) = MONTH(DATE_SUB(CURDATE(), INTERVAL 1 MONTH))
+");
+
+$last_month_collections = (float)$stmt->fetchColumn();
+
+if ($last_month_collections > 0) {
+    $mom_change =
+        (($month_collections - $last_month_collections)
+        / $last_month_collections) * 100;
+} else {
+    $mom_change = 0;
+}
+
 $mom_positive = $mom_change >= 0;
+
+/* Expenditures */
+$stmt = $pdo->query("
+    SELECT
+        MONTH(disbursement_date) AS month_num,
+        SUM(amount) AS total
+    FROM expenditures
+    WHERE YEAR(disbursement_date) = YEAR(CURDATE())
+    GROUP BY MONTH(disbursement_date)
+");
+
+while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+    $monthlyExpenditures[$row['month_num'] - 1] = (float)$row['total'];
+}
+
+/* Expenditures this month */
+$stmt = $pdo->query("
+    SELECT COALESCE(SUM(amount),0)
+    FROM expenditures
+    WHERE YEAR(disbursement_date) = YEAR(CURDATE())
+      AND MONTH(disbursement_date) = MONTH(CURDATE())
+");
+
+$month_expenditures = (float)$stmt->fetchColumn();
+
+$chartLabels = [
+    'Jan','Feb','Mar','Apr','May','Jun',
+    'Jul','Aug','Sep','Oct','Nov','Dec'
+];
+
+$net_balance = $month_collections - $month_expenditures;
+
+$net_class = $net_balance >= 0
+    ? 'text-success'
+    : 'text-danger';
+
+/* Total Budget Allocation */
+$stmt = $pdo->query("
+    SELECT COALESCE(SUM(allocated_amount), 0)
+    FROM budget_items
+    WHERE fiscal_year = YEAR(CURDATE())
+");
+
+$total_budget = (float)$stmt->fetchColumn();
+
+/* Expenditures this year */
+$stmt = $pdo->query("
+    SELECT COALESCE(SUM(amount), 0)
+    FROM expenditures
+    WHERE YEAR(disbursement_date) = YEAR(CURDATE())
+");
+
+$year_expenditures = (float)$stmt->fetchColumn();
+
+/* Budget Utilization % */
+$budget_utilization = 0;
+
+if ($total_budget > 0) {
+    $budget_utilization = ($year_expenditures / $total_budget) * 100;
+}
+
+if ($budget_utilization < 50) {
+    $util_color = 'success';
+} elseif ($budget_utilization < 80) {
+    $util_color = 'warning';
+} else {
+    $util_color = 'danger';
+}
+
+$expenditure_threshold = 50000;
+
+$exp_class = ($month_expenditures >= $expenditure_threshold)
+    ? 'text-danger fw-bold'
+    : 'text-dark';
+
+$net_class = ($net_balance >= 0)
+    ? 'text-success fw-bold'
+    : 'text-danger fw-bold';
+
+$util_color = ($budget_utilization >= 90)
+    ? 'danger'
+    : (($budget_utilization >= 70) ? 'warning' : 'success');
 
 // Color logic
 $exp_class    = ($month_expenditures >= $expenditure_threshold) ? 'text-danger fw-bold' : 'text-dark';
@@ -683,7 +834,7 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet" />
-  <link rel="stylesheet" href="assets/css/resident_dashboard.css" />
+  <link rel="stylesheet" href="../assets/css/resident_dashboard.css" />
   <link rel="stylesheet" href="assets/css/finance.css">
   
   <style>
@@ -800,44 +951,44 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
     <nav class="sidebar-menu" aria-label="Treasurer menu">
 
       <div class="sidebar-group">
-        <a class="sidebar-link <?= ($tab === 'dashboard' || $tab === '') ? 'is-active' : '' ?>" href="finance_ad.php?tab=dashboard">
+        <a class="sidebar-link <?= ($tab === 'dashboard' || $tab === '') ? 'is-active' : '' ?>" href="finance_admin.php?tab=dashboard">
           <i class="fa-solid fa-house"></i><span>Dashboard</span>
         </a>
       </div>
 
       <div class="sidebar-group">
         <span class="sidebar-section-label">COLLECTIONS</span>
-        <a class="sidebar-link <?= $tab === 'collections' ? 'is-active' : '' ?>" href="finance_ad.php?tab=collections">
+        <a class="sidebar-link <?= $tab === 'collections' ? 'is-active' : '' ?>" href="finance_admin.php?tab=collections">
           <i class="fa-solid fa-money-bill-transfer"></i><span>All Collections</span>
         </a>
-        <a class="sidebar-link <?= $tab === 'record' ? 'is-active' : '' ?>" href="finance_ad.php?tab=record">
+        <a class="sidebar-link <?= $tab === 'record' ? 'is-active' : '' ?>" href="finance_admin.php?tab=record">
           <i class="fa-solid fa-cash-register"></i><span>Record Payment</span>
         </a>
-        <a class="sidebar-link <?= $tab === 'receipts' ? 'is-active' : '' ?>" href="finance_ad.php?tab=receipts">
+        <a class="sidebar-link <?= $tab === 'receipts' ? 'is-active' : '' ?>" href="finance_admin.php?tab=receipts">
           <i class="fa-solid fa-file-invoice-dollar"></i><span>Official Receipts</span>
         </a>
       </div>
 
       <div class="sidebar-group">
         <span class="sidebar-section-label">EXPENDITURES</span>
-        <a class="sidebar-link <?= $tab === 'expenditures' ? 'is-active' : '' ?>" href="finance_ad.php?tab=expenditures">
+        <a class="sidebar-link <?= $tab === 'expenditures' ? 'is-active' : '' ?>" href="finance_admin.php?tab=expenditures">
           <i class="fa-solid fa-money-bill-wave"></i><span>All Expenditures</span>
         </a>
-        <a class="sidebar-link <?= $tab === 'add-exp' ? 'is-active' : '' ?>" href="finance_ad.php?tab=add-exp">
+        <a class="sidebar-link <?= $tab === 'add-exp' ? 'is-active' : '' ?>" href="finance_admin.php?tab=add-exp">
           <i class="fa-solid fa-circle-plus"></i><span>Add Expenditure</span>
         </a>
       </div>
 
       <div class="sidebar-group">
         <span class="sidebar-section-label">BUDGET</span>
-        <a class="sidebar-link <?= $tab === 'budget' ? 'is-active' : '' ?>" href="finance_ad.php?tab=budget">
+        <a class="sidebar-link <?= $tab === 'budget' ? 'is-active' : '' ?>" href="finance_admin.php?tab=budget">
           <i class="fa-solid fa-chart-pie"></i><span>Budget Management</span>
         </a>
       </div>
 
       <div class="sidebar-group">
         <span class="sidebar-section-label">REPORTS</span>
-        <a class="sidebar-link" href="finance_ad.php?tab=reports">
+        <a class="sidebar-link" href="finance_admin.php?tab=reports">
           <i class="fa-solid fa-file-invoice-dollar"></i><span>Financial Reports</span>
         </a>
       </div>
@@ -1236,9 +1387,9 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
               <a href="<?= col_sanitize($exportUrl) ?>" class="col-btn col-btn-outline">
                 <i class="fa-solid fa-file-csv"></i> Export CSV
               </a>
-              <button class="col-btn col-btn-primary" onclick="colOpenRecordModal()">
+              <a class="col-btn col-btn-primary" href="finance_admin.php?tab=record">
                 <i class="fa-solid fa-plus"></i> Record New Payment
-              </button>
+              </a>
             </div>
           </div>
 
@@ -1480,6 +1631,7 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
 
             <!-- Form -->
             <div class="rec-form-card">
+              <form action="#" method="post"></form>
 
               <!-- Source Type -->
               <div class="rec-row">
@@ -1608,7 +1760,7 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
                 </button>
               </div>
 
-            </div><!-- /rec-form-card -->
+            </div>
           </div>
 
         </section><!-- /col-section -->
@@ -2244,40 +2396,41 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
     <?php endif; ?>
   </div>
 
-  <script src="assets/js/resident_dashboard.js"></script>
+  <script src="../assets/js/resident_dashboard.js"></script>
   <script src="assets/js/finance.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 
   <script>
     (function () {
-      // --- STATIC DATA (replace with PHP-injected values later) ---
-      const labels        = ['January', 'February', 'March', 'April', 'May', 'June'];
-      const collections   = [82000, 95000, 110000, 143000, 162800, 187320];
-      const expenditures  = [70000, 88000, 105000, 120000, 130000, 134200];
 
-      const ctx = document.getElementById('revenueChart').getContext('2d');
+      const canvas = document.getElementById('revenueChart');
+      if (!canvas) return;
+
+      const labels = <?= json_encode($chartLabels) ?>;
+      const collections = <?= json_encode($monthlyCollections) ?>;
+      const expenditures = <?= json_encode($monthlyExpenditures) ?>;
+
+      const ctx = canvas.getContext('2d');
 
       new Chart(ctx, {
         data: {
           labels,
           datasets: [
             {
-              // Bar — Collections
               type: 'bar',
               label: 'Collections',
               data: collections,
               backgroundColor: 'rgba(234, 179, 8, 0.25)',
-              borderColor:     'rgba(234, 179, 8, 0.9)',
+              borderColor: 'rgba(234, 179, 8, 0.9)',
               borderWidth: 2,
               borderRadius: 6,
               order: 2,
             },
             {
-              // Line — Expenditures
               type: 'line',
               label: 'Expenditures',
               data: expenditures,
-              borderColor:     'rgba(239, 68, 68, 0.9)',
+              borderColor: 'rgba(239, 68, 68, 0.9)',
               backgroundColor: 'rgba(239, 68, 68, 0.08)',
               borderWidth: 2,
               pointBackgroundColor: 'rgba(239, 68, 68, 1)',
@@ -2287,11 +2440,10 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
               order: 1,
             },
             {
-              // Line — Collections trend
               type: 'line',
               label: 'Collections Trend',
               data: collections,
-              borderColor:     'rgba(234, 179, 8, 1)',
+              borderColor: 'rgba(234, 179, 8, 1)',
               backgroundColor: 'transparent',
               borderWidth: 2,
               borderDash: [5, 4],
@@ -2323,7 +2475,7 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
           scales: {
             x: {
               ticks: { color: '#aaa' },
-              grid:  { color: 'rgba(255,255,255,0.05)' }
+              grid: { color: 'rgba(255,255,255,0.05)' }
             },
             y: {
               ticks: {
@@ -2335,37 +2487,8 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
           }
         }
       });
-    })();
 
-    // Donut Chart
-    const doCtx = document.getElementById('donutChart').getContext('2d');
-    new Chart(doCtx, {
-    type: 'doughnut',
-    data: {
-        labels: ['General Admin','Public Services','Social Services','Other Services'],
-        datasets: [{
-        data: [40, 30, 20, 10],
-        backgroundColor: ['#3b82f6','#22c55e','#e8a020','#8b5cf6'],
-        borderWidth: 2,
-        borderColor: '#ffffff',
-        hoverOffset: 6
-        }]
-    },
-    options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        cutout: '72%',
-        plugins: {
-        legend: { display: false },
-        tooltip: {
-            backgroundColor: '#1a2236',
-            titleColor: '#fff',
-            bodyColor: '#e8a020',
-            callbacks: { label: ctx => ' ' + ctx.label + ': ' + ctx.raw + '%' }
-        }
-        }
-    }
-    });
+    })();
 
     function recReset() {
       document.querySelectorAll('input[name="rec_source_type"]').forEach(r => r.checked = false);
@@ -2380,7 +2503,7 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
     }
 
     /* Add Expenditures */
-    (function () {
+    /* (function () {
       const THRESHOLD = <?= (int)$APPROVAL_THRESHOLD ?>;
 
       // Approval badge
@@ -2433,7 +2556,7 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
         document.getElementById('colToast').appendChild(t);
         setTimeout(() => t.remove(), 3800);
       };
-    })();
+    })(); */
   </script>
 </body>
 </html>

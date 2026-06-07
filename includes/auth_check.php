@@ -14,6 +14,11 @@ function requireLogin() {
     }
 }
 
+$currentUser = [
+    'id'   => $_SESSION['user_id'] ?? null,
+    'role' => $_SESSION['role'] ?? null
+];
+
 
 /* Check if user has required role */
 function requireRole(array $allowedRoles) {

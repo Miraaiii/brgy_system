@@ -147,13 +147,14 @@ function json_official_login_redirect() {
 
 function dashboard_redirect_for_role($role) {
     $role = strtolower(trim((string)$role));
-    return match($role) {
-        'resident'  => 'portal/resident_dashboard.php',
-        'treasurer' => 'finance_ad.php',
-        'admin'     => 'dashboard.php',
-        'secretary' => 'secretary.php',
-        default     => 'dashboard.php'
-    };
+
+    if ($role === 'resident') {
+        return 'portal/resident_dashboard.php';
+    }
+    if (in_array($role, ['captain', 'secretary', 'treasurer', 'kagawad', 'sk_chair', 'sk_kagawad'], true)) {
+        return 'admin/dashboard.php';
+    }
+    return 'dashboard.php';
 }
 
 // 1. Google OAuth Callback (POST)

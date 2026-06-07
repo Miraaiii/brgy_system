@@ -75,29 +75,46 @@ function colPrintOR(d) {
 }
 
 /* ── Void ────────────────────────────────────────────────────────── */
-let _colVoidId = null;
+window._colVoidId = null;
 function colOpenVoid(id, orNum) {
-  _colVoidId = id;
+  window._colVoidId = id;
+
   document.getElementById('colVoidOrLabel').textContent = 'OR #' + orNum;
   document.getElementById('colVoidReason').value = '';
+
   colOpenModal('colVoidModal');
 }
+
 async function colSubmitVoid() {
   const reason = document.getElementById('colVoidReason').value.trim();
-  if (!reason) { colToast('Please provide a void reason.', 'err'); return; }
+
+  if (!reason) {
+    colToast('Please provide a void reason.', 'err');
+    return;
+  }
+
   const fd = new FormData();
   fd.append('_col_action', 'void');
-  fd.append('id', _colVoidId);
+  fd.append('id', window._colVoidId);
   fd.append('reason', reason);
+
   try {
-    const res  = await fetch('finance_ad.php?tab=collections', { method: 'POST', body: fd });
+    const res  = await fetch('finance_admin.php?tab=collections', {
+      method: 'POST',
+      body: fd
+    });
+
     const data = await res.json();
+
     if (data.success) {
       colToast(data.message, 'ok');
       colCloseModal('colVoidModal');
-      const row = document.querySelector(`tr[data-col-id="${_colVoidId}"]`);
+
+      const row = document.querySelector(`tr[data-col-id="${window._colVoidId}"]`);
+
       if (row) {
         row.classList.add('col-voided');
+
         const orEl = row.querySelector('.col-or');
         if (orEl && !row.querySelector('.col-void-label')) {
           const badge = document.createElement('span');
@@ -105,55 +122,78 @@ async function colSubmitVoid() {
           badge.innerHTML = '<i class="fa-solid fa-ban"></i> VOID';
           orEl.after(document.createElement('br'), badge);
         }
+
         const voidBtn = row.querySelector('[title="Void Collection"]');
         if (voidBtn) voidBtn.remove();
       }
     } else {
       colToast(data.message, 'err');
     }
-  } catch { colToast('Network error. Please try again.', 'err'); }
+
+  } catch (e) {
+    colToast('Network error. Please try again.', 'err');
+  }
 }
 
 // ── Record Payment ────────────────────────────────────────────────
-let recSearchTimer = null;
+window.recSearchTimer = null;
 let recResidentIdVal = null;
 let recRequestIdVal  = null;
 
 // Show/hide linked request row based on source type
-document.querySelectorAll('input[name="rec_source_type"]').forEach(radio => {
-  radio.addEventListener('change', () => {
-    const isDoc = radio.value === 'document_fee';
-    document.getElementById('recLinkedRequestRow').style.display = isDoc ? '' : 'none';
-    if (!isDoc) recClearLinked();
+document.addEventListener('DOMContentLoaded', () => {
+  const radios = document.querySelectorAll('input[name="rec_source_type"]');
+  const el = document.getElementById('recLinkedRequestRow');
+
+  if (!radios.length || !el) return;
+
+  radios.forEach(radio => {
+    radio.addEventListener('change', () => {
+      const isDoc = radio.value === 'document_fee';
+      el.style.display = isDoc ? '' : 'none';
+    });
   });
 });
 
 // Search document requests
-document.getElementById('recReqSearch').addEventListener('input', function () {
-  clearTimeout(recSearchTimer);
-  const q = this.value.trim();
-  if (q.length < 2) {
-    document.getElementById('recReqResults').classList.remove('open');
-    return;
-  }
-  recSearchTimer = setTimeout(() => {
-    fetch(`finance_ad.php?tab=record&_rec_search_req=1&q=${encodeURIComponent(q)}`)
-      .then(r => r.json())
-      .then(data => {
-        const box = document.getElementById('recReqResults');
-        if (!data.length) { box.classList.remove('open'); return; }
-        box.innerHTML = data.map(row => `
-          <div class="rec-result-item"
-               onclick="recSelectRequest(${row.id}, ${row.resident_id},
-                        '${row.reference_number}', '${row.document_type}',
-                        '${row.resident_name}')">
-            <strong>${row.reference_number} — ${row.document_type}</strong>
-            <span>${row.resident_name}</span>
-          </div>`).join('');
-        box.classList.add('open');
-      });
-  }, 300);
-});
+const recReqSearch = document.getElementById('recReqSearch');
+
+if (recReqSearch) {
+  recReqSearch.addEventListener('input', function () {
+    clearTimeout(window.recSearchTimer);
+
+    const q = this.value.trim();
+    if (q.length < 2) {
+      document.getElementById('recReqResults').classList.remove('open');
+      return;
+    }
+
+    window.recSearchTimer = setTimeout(() => {
+      fetch(`finance_admin.php?tab=record&_rec_search_req=1&q=${encodeURIComponent(q)}`)
+        .then(r => r.json())
+        .then(data => {
+          const box = document.getElementById('recReqResults');
+          if (!box) return;
+
+          if (!data.length) {
+            box.classList.remove('open');
+            return;
+          }
+
+          box.innerHTML = data.map(row => `
+            <div class="rec-result-item"
+                 onclick="recSelectRequest(${row.id}, ${row.resident_id},
+                          '${row.reference_number}', '${row.document_type}',
+                          '${row.resident_name}')">
+              <strong>${row.reference_number} — ${row.document_type}</strong>
+              <span>${row.resident_name}</span>
+            </div>`).join('');
+
+          box.classList.add('open');
+        });
+    }, 300);
+  });
+}
 
 function recSelectRequest(reqId, resId, refNo, docType, resName) {
   recRequestIdVal  = reqId;
@@ -239,7 +279,7 @@ async function recSubmit() {
   fd.append('notes',         notes);
 
   try {
-    const res  = await fetch('finance_ad.php?tab=record', { method: 'POST', body: fd });
+    const res  = await fetch('finance_admin.php?tab=record', { method: 'POST', body: fd });
     const data = await res.json();
     if (data.success) {
       colToast(`Payment saved — ${data.or_number}`, 'ok');
@@ -333,231 +373,40 @@ function colPrintOR(d) {
   area.style.display = 'none';
 }
 
-/* ── Void ────────────────────────────────────────────────────────── */
-let _colVoidId = null;
-function colOpenVoid(id, orNum) {
-  _colVoidId = id;
-  document.getElementById('colVoidOrLabel').textContent = 'OR #' + orNum;
-  document.getElementById('colVoidReason').value = '';
-  colOpenModal('colVoidModal');
-}
-async function colSubmitVoid() {
-  const reason = document.getElementById('colVoidReason').value.trim();
-  if (!reason) { colToast('Please provide a void reason.', 'err'); return; }
-  const fd = new FormData();
-  fd.append('_col_action', 'void');
-  fd.append('id', _colVoidId);
-  fd.append('reason', reason);
-  try {
-    const res  = await fetch('finance_ad.php?tab=collections', { method: 'POST', body: fd });
-    const data = await res.json();
-    if (data.success) {
-      colToast(data.message, 'ok');
-      colCloseModal('colVoidModal');
-      const row = document.querySelector(`tr[data-col-id="${_colVoidId}"]`);
-      if (row) {
-        row.classList.add('col-voided');
-        const orEl = row.querySelector('.col-or');
-        if (orEl && !row.querySelector('.col-void-label')) {
-          const badge = document.createElement('span');
-          badge.className = 'col-void-label';
-          badge.innerHTML = '<i class="fa-solid fa-ban"></i> VOID';
-          orEl.after(document.createElement('br'), badge);
-        }
-        const voidBtn = row.querySelector('[title="Void Collection"]');
-        if (voidBtn) voidBtn.remove();
-      }
-    } else {
-      colToast(data.message, 'err');
-    }
-  } catch { colToast('Network error. Please try again.', 'err'); }
-}
-
-// ── Record Payment ────────────────────────────────────────────────
-let recSearchTimer = null;
-let recResidentIdVal = null;
-let recRequestIdVal  = null;
-
-// Show/hide linked request row based on source type
-document.querySelectorAll('input[name="rec_source_type"]').forEach(radio => {
-  radio.addEventListener('change', () => {
-    const isDoc = radio.value === 'document_fee';
-    document.getElementById('recLinkedRequestRow').style.display = isDoc ? '' : 'none';
-    if (!isDoc) recClearLinked();
-  });
-});
-
-// Search document requests
-document.getElementById('recReqSearch').addEventListener('input', function () {
-  clearTimeout(recSearchTimer);
-  const q = this.value.trim();
-  if (q.length < 2) {
-    document.getElementById('recReqResults').classList.remove('open');
-    return;
-  }
-  recSearchTimer = setTimeout(() => {
-    fetch(`finance_ad.php?tab=record&_rec_search_req=1&q=${encodeURIComponent(q)}`)
-      .then(r => r.json())
-      .then(data => {
-        const box = document.getElementById('recReqResults');
-        if (!data.length) { box.classList.remove('open'); return; }
-        box.innerHTML = data.map(row => `
-          <div class="rec-result-item"
-               onclick="recSelectRequest(${row.id}, ${row.resident_id},
-                        '${row.reference_number}', '${row.document_type}',
-                        '${row.resident_name}')">
-            <strong>${row.reference_number} — ${row.document_type}</strong>
-            <span>${row.resident_name}</span>
-          </div>`).join('');
-        box.classList.add('open');
-      });
-  }, 300);
-});
-
-function recSelectRequest(reqId, resId, refNo, docType, resName) {
-  recRequestIdVal  = reqId;
-  recResidentIdVal = resId;
-  document.getElementById('recRequestId').value  = reqId;
-  document.getElementById('recResidentId').value = resId;
-  document.getElementById('recLinkedText').textContent = `${refNo} — ${docType} (${resName})`;
-  document.getElementById('recLinkedPreview').style.display = 'flex';
-  document.getElementById('recReqSearch').value = '';
-  document.getElementById('recReqResults').classList.remove('open');
-  document.getElementById('recResidentName').value = resName;
-  document.getElementById('recDescription').value  = docType + ' Fee';
-}
-
-function recClearLinked() {
-  recRequestIdVal  = null;
-  recResidentIdVal = null;
-  document.getElementById('recRequestId').value  = '';
-  document.getElementById('recResidentId').value = '';
-  document.getElementById('recLinkedPreview').style.display = 'none';
-  document.getElementById('recReqSearch').value  = '';
-  document.getElementById('recResidentName').value = '';
-}
-
-// Close search results on outside click
-document.addEventListener('click', e => {
-  if (!e.target.closest('.rec-search-wrap'))
-    document.getElementById('recReqResults').classList.remove('open');
-});
-
-function recClearErrors() {
-  ['recErrSourceType','recErrResident','recErrAmount','recErrDate','recErrDescription']
-    .forEach(id => { document.getElementById(id).textContent = ''; });
-  document.querySelectorAll('.rec-input').forEach(el => el.classList.remove('rec-input--error'));
-}
-
-async function recSubmit() {
-  recClearErrors();
-
-  const sourceType  = document.querySelector('input[name="rec_source_type"]:checked')?.value ?? '';
-  const residentName= document.getElementById('recResidentName').value.trim();
-  const amount      = parseFloat(document.getElementById('recAmount').value);
-  const date        = document.getElementById('recDateCollected').value;
-  const description = document.getElementById('recDescription').value.trim();
-  const notes       = document.getElementById('recNotes').value.trim();
-
-  // Client-side validation
-  let hasErr = false;
-  if (!sourceType) {
-    document.getElementById('recErrSourceType').textContent = 'Please select a source type.';
-    hasErr = true;
-  }
-  if (!residentName) {
-    document.getElementById('recErrResident').textContent = 'Resident name is required.';
-    hasErr = true;
-  }
-  if (!amount || amount <= 0) {
-    document.getElementById('recErrAmount').textContent = 'Enter a valid amount greater than 0.';
-    hasErr = true;
-  }
-  if (!date) {
-    document.getElementById('recErrDate').textContent = 'Date collected is required.';
-    hasErr = true;
-  }
-  if (!description) {
-    document.getElementById('recErrDescription').textContent = 'Description is required.';
-    hasErr = true;
-  }
-  if (hasErr) return;
-
-  const btn = document.getElementById('recSubmitBtn');
-  btn.disabled = true;
-  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving…';
-
-  const fd = new FormData();
-  fd.append('_rec_action',   'record_payment');
-  fd.append('source_type',   sourceType);
-  fd.append('resident_id',   document.getElementById('recResidentId').value);
-  fd.append('request_id',    document.getElementById('recRequestId').value);
-  fd.append('amount',        amount);
-  fd.append('description',   description);
-  fd.append('collected_at',  date);
-  fd.append('notes',         notes);
-
-  try {
-    const res  = await fetch('finance_ad.php?tab=record', { method: 'POST', body: fd });
-    const data = await res.json();
-    if (data.success) {
-      colToast(`Payment saved — ${data.or_number}`, 'ok');
-      recReset();
-      // Update OR preview
-      document.getElementById('recOrPreview').textContent = data.or_number;
-    } else {
-      colToast(data.message, 'err');
-    }
-  } catch {
-    colToast('Network error. Please try again.', 'err');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Save Payment';
-  }
-}
-
 /* ── Add Expenditure ─────────────────────────────────────────────── */
 (function () {
-  // Only run on the add-expenditure page
+
+  const expenditureForm = document.getElementById('add-exp');
+
+  if (!expenditureForm) return;
+
+  const THRESHOLD = 5000;
+
   const amountEl = document.getElementById('amount');
   const badge    = document.getElementById('approvalBadge');
+
   if (!amountEl || !badge) return;
 
-  // Threshold is rendered by PHP into the page as a data attribute:
-  // <main id="add-exp" data-threshold="5000">
-  const page      = document.getElementById('add-exp');
-  const THRESHOLD = page ? parseFloat(page.dataset.threshold) || 5000 : 5000;
-
-  // Approval badge
   amountEl.addEventListener('input', function () {
     const val = parseFloat(this.value);
-    if (!val || val <= 0) { badge.style.display = 'none'; return; }
+
+    if (!val || val <= 0) {
+      badge.style.display = 'none';
+      return;
+    }
+
     badge.style.display = 'flex';
+
     if (val < THRESHOLD) {
       badge.className = 'approval-badge auto';
-      badge.innerHTML = '✅ This expenditure will be <strong style="margin-left:4px">auto-approved</strong> and recorded immediately.';
+      badge.innerHTML =
+        '✅ This expenditure will be <strong style="margin-left:4px">auto-approved</strong>.';
     } else {
       badge.className = 'approval-badge pending';
-      badge.innerHTML = '🕐 This expenditure requires <strong style="margin-left:4px">Captain approval</strong> before it is recorded.';
+      badge.innerHTML =
+        '🕐 This expenditure requires <strong style="margin-left:4px">Captain approval</strong>.';
     }
   });
-
-  // File validation
-  const docInput = document.getElementById('supporting_doc');
-  if (docInput) {
-    docInput.addEventListener('change', function () {
-      const el = document.getElementById('fileChosen');
-      if (!this.files.length) return;
-      const f = this.files[0];
-      if (f.size > 5 * 1024 * 1024) {
-        colToast('File exceeds the 5 MB limit.', 'err');
-        this.value = '';
-        if (el) el.style.display = 'none';
-        return;
-      }
-      if (el) { el.textContent = '📄 ' + f.name; el.style.display = 'block'; }
-    });
-  }
 })();
 /* ── Budget Overview ─────────────────────────────────────────────── */
 (function () {

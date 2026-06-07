@@ -12,8 +12,8 @@ define('ADMIN_RECAPTCHA_SECRET_KEY', getenv('RECAPTCHA_SECRET_KEY') ?: '6LestQct
 $admin_roles = ['captain', 'secretary', 'treasurer', 'kagawad', 'sk_chair', 'sk_kagawad'];
 
 if (!empty($_SESSION['user_id']) && in_array(strtolower((string)($_SESSION['role'] ?? '')), $admin_roles, true)) {
-    header('Location: dashboard.php');
-    exit();
+  header('Location: ' . getRedirectByRole($_SESSION['role']));
+  exit();
 }
 
 function admin_login_verify_recaptcha($token) {
@@ -62,6 +62,13 @@ function admin_login_verify_recaptcha($token) {
 
 function admin_login_e($value) {
     return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
+}
+
+function getRedirectByRole($role) {
+    return match ($role) {
+      'treasurer' => 'finance_admin.php',
+      default => 'dashboard.php',
+    };
 }
 
 $error = (string)($_SESSION['admin_login_error'] ?? '');
@@ -135,7 +142,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
 
-            header('Location: dashboard.php');
+            header('Location: ' . getRedirectByRole($role));
             exit();
         }
     }
