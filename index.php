@@ -186,12 +186,12 @@ $services = [
     .nav-cta {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
     }
     .btn-nav-login {
       font-size: 13px;
       font-weight: 600;
-      padding: 7px 18px;
+      padding: 7px 12px;
       border-radius: 8px;
       border: 1.5px solid rgba(255,255,255,.3);
       color: #fff;
@@ -199,11 +199,12 @@ $services = [
       text-decoration: none;
       transition: var(--transition);
     }
-    .btn-nav-login:hover { background: rgba(255,255,255,.12); color: #fff; border-color: rgba(255,255,255,.6); }
+    .btn-nav-login:hover,
+    .btn-nav-login.active { background: rgba(255,255,255,.12); color: #fff; border-color: rgba(255,255,255,.6); }
     .btn-nav-register {
       font-size: 13px;
       font-weight: 600;
-      padding: 7px 18px;
+      padding: 7px 14px;
       border-radius: 8px;
       background: var(--gold);
       color: var(--navy);
@@ -239,10 +240,10 @@ $services = [
       border-radius: 8px;
     }
     .nav-mobile-menu a:hover { background: rgba(255,255,255,.08); }
-    .nav-mobile-menu .mobile-cta { display: flex; gap: 8px; margin-top: 8px; }
-    .nav-mobile-menu .mobile-cta a { flex: 1; text-align: center; }
+    .nav-mobile-menu .mobile-cta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .nav-mobile-menu .mobile-cta a { flex: 1 1 135px; justify-content: center; text-align: center; }
 
-    @media (max-width: 960px) {
+    @media (max-width: 1060px) {
       .nav-links, .nav-cta { display: none; }
       .nav-toggle { display: block; }
       .nav-mobile-menu.open { display: flex; }

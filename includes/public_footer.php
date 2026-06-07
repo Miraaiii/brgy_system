@@ -28,7 +28,6 @@ if (!function_exists('render_public_footer')) {
               <a href="<?= htmlspecialchars($contactHref) ?>">Contact</a>
               <a href="register.php">Register</a>
               <a href="login.php">Resident Login</a>
-              <a href="login.php">Staff Login</a>
             </nav>
 
             <div class="public-footer__contact" aria-label="Barangay office contact">

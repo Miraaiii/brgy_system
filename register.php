@@ -412,7 +412,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" />
 
-  <link rel="stylesheet" href="assets/css/login_register.css?v=20260603b" />
+  <link rel="stylesheet" href="assets/css/login_register.css?v=20260605a" />
   <link rel="shortcut icon" href="assets/images/logo_noveleta.png" />
 </head>
 <body>

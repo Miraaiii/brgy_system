@@ -655,7 +655,7 @@ function rp_page_end() {
     ?>
         </main>
       </div>
-      <script src="../assets/js/resident_dashboard.js"></script>
+      <script src="../assets/js/resident_dashboard.js?v=20260605b"></script>
     </body>
     </html>
     <?php

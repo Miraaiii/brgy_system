@@ -38,7 +38,7 @@ if (!function_exists('render_public_nav')) {
             </div>
 
             <div class="nav-cta">
-              <a href="login.php" class="btn-nav-login <?= $active === 'login' ? 'active' : '' ?>">Log In</a>
+              <a href="login.php" class="btn-nav-login <?= $active === 'login' ? 'active' : '' ?>">Resident Login</a>
               <a href="register.php" class="btn-nav-register <?= $active === 'register' ? 'active' : '' ?>"><i class="bi bi-person-plus-fill"></i> Register</a>
             </div>
 
@@ -52,7 +52,7 @@ if (!function_exists('render_public_nav')) {
               <a href="<?= htmlspecialchars($href) ?>" class="<?= $active === $key ? 'active' : '' ?>" role="menuitem"><?= htmlspecialchars($label) ?></a>
             <?php endforeach; ?>
             <div class="mobile-cta">
-              <a href="login.php" class="btn-nav-login <?= $active === 'login' ? 'active' : '' ?>" role="menuitem">Log In</a>
+              <a href="login.php" class="btn-nav-login <?= $active === 'login' ? 'active' : '' ?>" role="menuitem">Resident Login</a>
               <a href="register.php" class="btn-nav-register <?= $active === 'register' ? 'active' : '' ?>" role="menuitem">Register</a>
             </div>
           </div>
