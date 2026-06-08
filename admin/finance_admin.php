@@ -379,20 +379,6 @@ if (!in_array($categoryFilter, $validCategories, true)) {
     $categoryFilter = 'all';
 }
  
-// ─── DB Query ─────────────────────────────────────────────────────────────────
-// SELECT e.id, e.category, e.description, e.amount, e.disbursement_date,
-//        e.payee, e.supporting_doc_path,
-//        u_rec.username AS recorded_by_name,
-//        u_apr.username AS approved_by_name,
-//        CASE WHEN e.approved_by IS NOT NULL THEN 'Approved'
-//             ELSE 'Pending Approval' END AS approval_status
-// FROM expenditures e
-// JOIN users u_rec ON u_rec.id = e.recorded_by
-// LEFT JOIN users u_apr ON u_apr.id = e.approved_by
-// WHERE e.category = ?           -- or ignored when 'all'
-//   AND e.disbursement_date BETWEEN ? AND ?
-// ORDER BY e.disbursement_date DESC;
- 
 $expenditures = [];
 $subtotals    = [];
 $totalAmount  = 0;
@@ -521,12 +507,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // ── Approval threshold rule ─────────────────────────────────────
         $new_id = $pdo->lastInsertId();
         if ($amount < $APPROVAL_THRESHOLD) {
-            $pdo->prepare("UPDATE expenditures SET status='Approved', approved_by=? WHERE id=?")
+            $pdo->prepare("UPDATE expenditures SET approval_status='Approved', approved_by=? WHERE id=?")
                 ->execute([$recorded_by, $new_id]);
             $toast_msg  = 'Expenditure recorded and auto-approved.';
             $toast_type = 'success';
         } else {
-            $pdo->prepare("UPDATE expenditures SET status='Pending Captain Approval' WHERE id=?")
+            $pdo->prepare("UPDATE expenditures SET approval_status='Pending Captain Approval' WHERE id=?")
                 ->execute([$new_id]);
             $toast_msg  = 'Expenditure submitted — pending Captain approval.';
             $toast_type = 'pending';
@@ -552,10 +538,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['_bud_action'])) {
  
     /* ── Add budget item ─────────────────────────────────────────── */
     if ($action === 'add') {
+      error_log("POST DATA: " . json_encode($_POST));
         $category         = trim($_POST['category']         ?? '');
         $description      = trim($_POST['description']      ?? '');
         $allocated_amount = (float)($_POST['allocated_amount'] ?? 0);
-        $fy               = (int)($_POST['fiscal_year']     ?? date('Y'));
+        if (!isset($_POST['fiscal_year']) || !is_numeric($_POST['fiscal_year'])) {
+            echo json_encode(['success'=>false,'message'=>'Invalid fiscal year.']);
+            exit;
+        }
+
+        $fy = (int) $_POST['fiscal_year'];
  
         $allowed = ['Personnel','Supplies','Infrastructure','Events','Maintenance','Other'];
         if (!in_array($category, $allowed))          { echo json_encode(['success'=>false,'message'=>'Invalid category.']); exit; }
@@ -566,8 +558,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['_bud_action'])) {
         $chk->execute([$category, $fy]);
         if ($chk->fetch()) { echo json_encode(['success'=>false,'message'=>'This category already has a budget line for '.$fy.'.']); exit; }
  
-        $stmt = $pdo->prepare("INSERT INTO budget_items (category, description, allocated_amount, fiscal_year) VALUES (?,?,?,?)");
-        $stmt->execute([$category, $description, $allocated_amount, $fy]);
+        $created_by = (int)$_SESSION['user_id'];
+
+        $stmt = $pdo->prepare("
+            INSERT INTO budget_items
+            (
+                category,
+                description,
+                allocated_amount,
+                fiscal_year,
+                created_by
+            )
+            VALUES (?, ?, ?, ?, ?)
+        ");
+
+        $stmt->execute([
+            $category,
+            $description,
+            $allocated_amount,
+            $fy,
+            $created_by
+        ]);
         echo json_encode(['success'=>true,'message'=>'Budget item added.','id'=>$pdo->lastInsertId()]);
         exit;
     }
@@ -631,17 +642,23 @@ $items_stmt = $pdo->prepare("
 $items_stmt->execute([$fiscal_year]);
 $budget_items = $items_stmt->fetchAll(PDO::FETCH_ASSOC);
  
-/* ── Total budget vs total spent ─────────────────────────────────── */
-$totals_stmt = $pdo->prepare("
-    SELECT SUM(b.allocated_amount) AS total_budget,
-           COALESCE(SUM(e.amount), 0) AS total_spent
-    FROM budget_items b
-    LEFT JOIN expenditures e
-           ON YEAR(e.disbursement_date) = b.fiscal_year
-    WHERE b.fiscal_year = ?
+/* Total budget vs total spent */
+$stmt = $pdo->prepare("
+    SELECT COALESCE(SUM(allocated_amount),0)
+    FROM budget_items
+    WHERE fiscal_year = ?
 ");
-$totals_stmt->execute([$fiscal_year]);
-$totals = $totals_stmt->fetch(PDO::FETCH_ASSOC);
+$stmt->execute([$fiscal_year]);
+$total_budget = (float)$stmt->fetchColumn();
+
+$stmt = $pdo->prepare("
+    SELECT COALESCE(SUM(amount),0)
+    FROM expenditures
+    WHERE YEAR(disbursement_date) = ?
+    AND approval_status = 'approved'
+");
+$stmt->execute([$fiscal_year]);
+$total_spent = (float)$stmt->fetchColumn();
  
 $total_budget    = (float)($totals['total_budget'] ?? 0);
 $total_spent     = (float)($totals['total_spent']  ?? 0);
@@ -676,7 +693,7 @@ $document_processing_times = [];
 
 // Role & fiscal year
 $role_label            = 'Barangay Treasurer';
-$fiscal_year           = 'Fiscal Year ' . date('Y');
+$fiscal_year_label = 'Fiscal Year ' . $fiscal_year;
 
 function e($val) { return htmlspecialchars((string)$val, ENT_QUOTES, 'UTF-8'); }
 function rd_date($val) { return date('M j, Y g:i A', strtotime($val)); }
@@ -822,7 +839,450 @@ $util_color = ($budget_utilization >= 90)
 // Color logic
 $exp_class    = ($month_expenditures >= $expenditure_threshold) ? 'text-danger fw-bold' : 'text-dark';
 $net_class    = ($net_balance >= 0) ? 'text-success fw-bold' : 'text-danger fw-bold';
-$util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >= 70) ? 'warning' : 'success'); 
+$util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >= 70) ? 'warning' : 'success');
+
+/* REPORTS PHP */
+if ($tab === 'reports' && isset($_GET['export'])) {
+
+  $month  = (int)($_GET['month'] ?? 0);
+  $year   = (int)($_GET['year'] ?? 0);
+  $export = $_GET['export'] ?? 'preview';
+
+  if ($month < 1 || $month > 12 || $year < 2000 || $year > 2100) {
+      http_response_code(400);
+      echo json_encode(['error' => 'Invalid or missing month/year parameters.']);
+      exit;
+  }
+
+  // ALL report logic here\
+  $fpdfPath = __DIR__ . '/vendor/fpdf/fpdf.php';
+
+  // ── Input validation ─────────────────────────────────────────
+  $month  = filter_input(INPUT_GET, 'month',  FILTER_VALIDATE_INT, ['options' => ['min_range' => 1,    'max_range' => 12]]);
+  $year   = filter_input(INPUT_GET, 'year',   FILTER_VALIDATE_INT, ['options' => ['min_range' => 2000, 'max_range' => 2100]]);
+  $export = trim(filter_input(INPUT_GET, 'export', FILTER_SANITIZE_SPECIAL_CHARS) ?? 'preview');
+
+  if (!$month || !$year) {
+    http_response_code(400);
+    echo json_encode(['error' => 'Invalid or missing month/year parameters.']);
+    exit;
+  }
+
+  if (!in_array($export, ['preview', 'pdf', 'csv'], true)) {
+    $export = 'preview';
+  }
+
+  // ── Helpers ──────────────────────────────────────────────────
+  function monthName(int $m): string {
+    return date('F', mktime(0, 0, 0, $m, 1));
+  }
+  
+  function peso(float $v): string {
+    return '₱ ' . number_format(abs($v), 2);
+  }
+  
+  function pesoSigned(float $v): string {
+    $fmt = '₱ ' . number_format(abs($v), 2);
+    return $v < 0 ? '(' . $fmt . ')' : $fmt;
+  }
+
+  // ── Query 1: Collections + Expenditures breakdown (UNION ALL) ─
+  /**
+   * Exact SQL preserved from spec.
+   * Binds: month, year (collections), month, year (expenditures)
+   */
+  $sqlBreakdown = "
+      SELECT
+          source_type,
+          COUNT(*)       AS transaction_count,
+          SUM(amount)    AS total_amount
+      FROM collections
+      WHERE MONTH(collected_at)  = ? AND YEAR(collected_at)  = ?
+      GROUP BY source_type
+  
+      UNION ALL
+  
+      SELECT
+          CONCAT('EXP: ', category) AS source_type,
+          COUNT(*)                  AS transaction_count,
+          SUM(amount)               AS total_amount
+      FROM expenditures
+      WHERE MONTH(disbursement_date) = ? AND YEAR(disbursement_date) = ?
+      GROUP BY category
+  ";
+  
+  $stmtBreakdown = $pdo->prepare($sqlBreakdown);
+  $stmtBreakdown->execute([$month, $year, $month, $year]);
+  $breakdown = $stmtBreakdown->fetchAll(PDO::FETCH_ASSOC);
+
+  // ── Query 2: Net balance ──────────────────────────────────────
+  /**
+   * Exact SQL preserved from spec.
+   * Binds: month, year (collections), month, year (expenditures)
+   */
+  $sqlNet = "
+      SELECT
+          COALESCE(SUM(c.amount), 0) - COALESCE(SUM(e.amount), 0) AS net_balance
+      FROM (SELECT 1) d
+      LEFT JOIN collections  c ON MONTH(c.collected_at)       = ? AND YEAR(c.collected_at)       = ?
+      LEFT JOIN expenditures e ON MONTH(e.disbursement_date)  = ? AND YEAR(e.disbursement_date)  = ?
+  ";
+  
+  $stmtNet = $pdo->prepare($sqlNet);
+  $stmtNet->execute([$month, $year, $month, $year]);
+  $netRow = $stmtNet->fetch(PDO::FETCH_ASSOC);
+  $netBalance = (float)($netRow['net_balance'] ?? 0);
+
+  // ── Derived totals from breakdown ────────────────────────────
+  $totalCollections  = 0.0;
+  $totalExpenditures = 0.0;
+  $collections       = [];
+  $expenditures      = [];
+  
+  foreach ($breakdown as $row) {
+      $amount = (float)$row['total_amount'];
+      if (str_starts_with($row['source_type'], 'EXP: ')) {
+          $totalExpenditures += $amount;
+          $expenditures[] = [
+              'label' => substr($row['source_type'], 5), // strip 'EXP: '
+              'count' => (int)$row['transaction_count'],
+              'amount' => $amount,
+          ];
+      } else {
+          $totalCollections += $amount;
+          $collections[] = [
+              'label' => $row['source_type'],
+              'count' => (int)$row['transaction_count'],
+              'amount' => $amount,
+          ];
+      }
+  }
+  
+  $periodLabel   = monthName($month) . ' ' . $year;
+  $generatedDate = date('F j, Y');
+  $preparedBy    = 'Barangay Treasurer'; // adjust to session value if needed
+
+  // ════════════════════════════════════════════════════════════════
+  // EXPORT: CSV
+  // ════════════════════════════════════════════════════════════════
+  if ($export === 'csv') {
+      header('Content-Type: text/csv; charset=UTF-8');
+      header('Content-Disposition: attachment; filename="financial_summary_' . $year . '_' . str_pad((string)$month, 2, '0', STR_PAD_LEFT) . '.csv"');
+      header('Cache-Control: no-cache, no-store');
+  
+      $out = fopen('php://output', 'w');
+  
+      // BOM for Excel UTF-8 compatibility
+      fputs($out, "\xEF\xBB\xBF");
+  
+      fputcsv($out, ['MONTHLY FINANCIAL SUMMARY']);
+      fputcsv($out, ['Period', $periodLabel]);
+      fputcsv($out, ['Date Generated', $generatedDate]);
+      fputcsv($out, ['Prepared By', $preparedBy]);
+      fputcsv($out, []);
+  
+      fputcsv($out, ['--- COLLECTIONS ---']);
+      fputcsv($out, ['Source Type', 'Transactions', 'Amount']);
+      foreach ($collections as $r) {
+          fputcsv($out, [$r['label'], $r['count'], number_format($r['amount'], 2, '.', '')]);
+      }
+      fputcsv($out, ['TOTAL COLLECTIONS', array_sum(array_column($collections, 'count')), number_format($totalCollections, 2, '.', '')]);
+      fputcsv($out, []);
+  
+      fputcsv($out, ['--- EXPENDITURES ---']);
+      fputcsv($out, ['Category', 'Transactions', 'Amount']);
+      foreach ($expenditures as $r) {
+          fputcsv($out, [$r['label'], $r['count'], number_format($r['amount'], 2, '.', '')]);
+      }
+      fputcsv($out, ['TOTAL EXPENDITURES', array_sum(array_column($expenditures, 'count')), number_format($totalExpenditures, 2, '.', '')]);
+      fputcsv($out, []);
+  
+      $netLabel = $netBalance >= 0 ? 'NET SURPLUS' : 'NET DEFICIT';
+      fputcsv($out, [$netLabel, '', number_format(abs($netBalance), 2, '.', '')]);
+  
+      fclose($out);
+      exit;
+  }
+  
+  // ════════════════════════════════════════════════════════════════
+  // EXPORT: PDF  (FPDF)
+  // ════════════════════════════════════════════════════════════════
+  if ($export === 'pdf') {
+      if (!file_exists($fpdfPath)) {
+          http_response_code(500);
+          echo json_encode(['error' => 'FPDF library not found at: ' . $fpdfPath]);
+          exit;
+      }
+  
+      require_once $fpdfPath;
+  
+      class SummaryPDF extends FPDF {
+          public string $barangay  = 'BARANGAY SAMPLE';
+          public string $address   = 'Municipality of Sample, Province of Sample';
+          public string $period    = '';
+          public string $genDate   = '';
+          public string $prepBy    = '';
+          public string $reportTitle = 'MONTHLY FINANCIAL SUMMARY';
+  
+          // Brand navy
+          private array $navy  = [11, 37, 69];
+          private array $gold  = [201, 150, 30];
+          private array $white = [255, 255, 255];
+          private array $light = [250, 247, 239];
+          private array $text  = [32, 48, 71];
+          private array $muted = [102, 112, 133];
+  
+          function Header(): void {
+              // Navy header bar
+              $this->SetFillColor(...$this->navy);
+              $this->Rect(0, 0, 210, 32, 'F');
+  
+              // Gold accent line
+              $this->SetFillColor(...$this->gold);
+              $this->Rect(0, 32, 210, 1.5, 'F');
+  
+              $this->SetTextColor(...$this->white);
+              $this->SetFont('Arial', 'B', 14);
+              $this->SetY(6);
+              $this->Cell(0, 6, $this->barangay, 0, 1, 'C');
+  
+              $this->SetFont('Arial', '', 8);
+              $this->Cell(0, 5, 'Republic of the Philippines  |  ' . $this->address, 0, 1, 'C');
+  
+              $this->SetFont('Arial', 'B', 10);
+              $this->SetTextColor(...$this->gold);
+              $this->Cell(0, 6, $this->reportTitle, 0, 1, 'C');
+  
+              // Meta row
+              $this->SetFillColor(...$this->light);
+              $this->Rect(10, 36, 190, 12, 'F');
+              $this->SetFont('Arial', '', 8);
+              $this->SetTextColor(...$this->muted);
+              $this->SetY(38);
+              $this->SetX(12);
+              $this->Cell(63, 4, 'Period Covered: ' . $this->period,     0, 0);
+              $this->Cell(63, 4, 'Date Generated: ' . $this->genDate,    0, 0);
+              $this->Cell(63, 4, 'Prepared By: '    . $this->prepBy,     0, 0);
+              $this->Ln(10);
+          }
+  
+          function Footer(): void {
+              $this->SetY(-12);
+              $this->SetFont('Arial', 'I', 7);
+              $this->SetTextColor(...$this->muted);
+              $this->Cell(0, 5, 'Page ' . $this->PageNo() . '  |  ' . $this->barangay . ' — ' . $this->reportTitle, 0, 0, 'C');
+          }
+  
+          /** Section heading */
+          function sectionHead(string $title): void {
+              $this->SetFillColor(...$this->navy);
+              $this->SetTextColor(...$this->white);
+              $this->SetFont('Arial', 'B', 9);
+              $this->Cell(0, 7, '  ' . strtoupper($title), 0, 1, 'L', true);
+              $this->Ln(1);
+          }
+  
+          /** Column header row */
+          function tableHead(array $cols, array $widths, array $aligns): void {
+              $this->SetFillColor(...$this->navy);
+              $this->SetTextColor(...$this->white);
+              $this->SetFont('Arial', 'B', 8);
+              foreach ($cols as $i => $col) {
+                  $this->Cell($widths[$i], 6, $col, 0, 0, $aligns[$i], true);
+              }
+              $this->Ln();
+          }
+  
+          /** Data row */
+          function tableRow(array $cells, array $widths, array $aligns, bool $shade = false): void {
+              if ($shade) {
+                  $this->SetFillColor(...$this->light);
+              } else {
+                  $this->SetFillColor(...$this->white);
+              }
+              $this->SetTextColor(...$this->text);
+              $this->SetFont('Arial', '', 8);
+              foreach ($cells as $i => $cell) {
+                  $this->Cell($widths[$i], 6, $cell, 0, 0, $aligns[$i], true);
+              }
+              $this->Ln();
+              // thin border line
+              $this->SetDrawColor(230, 222, 206);
+              $this->Line(10, $this->GetY(), 200, $this->GetY());
+          }
+  
+          /** Totals / summary row */
+          function totalRow(array $cells, array $widths, array $aligns): void {
+              $this->SetFillColor(...$this->light);
+              $this->SetTextColor(...$this->navy);
+              $this->SetFont('Arial', 'B', 8);
+              foreach ($cells as $i => $cell) {
+                  $this->Cell($widths[$i], 7, $cell, 0, 0, $aligns[$i], true);
+              }
+              $this->Ln(9);
+          }
+  
+          /** Net balance highlight box */
+          function netBox(string $label, float $amount): void {
+              $this->Ln(4);
+              $color = $amount >= 0 ? [22, 163, 74] : [220, 38, 38];
+              $bg    = $amount >= 0 ? [236, 253, 243] : [254, 242, 242];
+              $this->SetFillColor(...$bg);
+              $this->SetDrawColor(...$color);
+              $this->RoundedRect(10, $this->GetY(), 190, 14, 3, 'DF');
+              $this->SetFont('Arial', 'B', 11);
+              $this->SetTextColor(...$color);
+              $this->SetY($this->GetY() + 3);
+              $this->Cell(130, 6, '  ' . strtoupper($label), 0, 0, 'L');
+              $this->Cell(60,  6, '₱ ' . number_format(abs($amount), 2), 0, 0, 'R');
+              $this->Ln(10);
+          }
+  
+          /** FPDF doesn't have RoundedRect natively — simple polyfill */
+          function RoundedRect(float $x, float $y, float $w, float $h, float $r, string $style = ''): void {
+              $k  = $this->k;
+              $hp = $this->h;
+              if ($style === 'F') $op = 'f';
+              elseif ($style === 'FD' || $style === 'DF') $op = 'B';
+              else $op = 'S';
+              $MyArc = 4 / 3 * (sqrt(2) - 1);
+              $this->_out(sprintf('%.2F %.2F m', ($x + $r) * $k, ($hp - $y) * $k));
+              $xc = $x + $w - $r; $yc = $y + $r;
+              $this->_out(sprintf('%.2F %.2F l', $xc * $k, ($hp - $y) * $k));
+              $this->_Arc($xc + $r * $MyArc, $yc - $r, $xc + $r, $yc - $r * $MyArc, $xc + $r, $yc);
+              $xc = $x + $w - $r; $yc = $y + $h - $r;
+              $this->_out(sprintf('%.2F %.2F l', ($x + $w) * $k, ($hp - $yc) * $k));
+              $this->_Arc($xc + $r, $yc + $r * $MyArc, $xc + $r * $MyArc, $yc + $r, $xc, $yc + $r);
+              $xc = $x + $r; $yc = $y + $h - $r;
+              $this->_out(sprintf('%.2F %.2F l', $xc * $k, ($hp - ($y + $h)) * $k));
+              $this->_Arc($xc - $r * $MyArc, $yc + $r, $xc - $r, $yc + $r * $MyArc, $xc - $r, $yc);
+              $xc = $x + $r; $yc = $y + $r;
+              $this->_out(sprintf('%.2F %.2F l', $x * $k, ($hp - $yc) * $k));
+              $this->_Arc($xc - $r, $yc - $r * $MyArc, $xc - $r * $MyArc, $yc - $r, $xc, $yc - $r);
+              $this->_out($op);
+          }
+  
+          function _Arc(float $x1, float $y1, float $x2, float $y2, float $x3, float $y3): void {
+              $h = $this->h;
+              $this->_out(sprintf('%.2F %.2F %.2F %.2F %.2F %.2F c',
+                  $x1 * $this->k, ($h - $y1) * $this->k,
+                  $x2 * $this->k, ($h - $y2) * $this->k,
+                  $x3 * $this->k, ($h - $y3) * $this->k));
+          }
+      }
+  
+      // Build PDF
+      $pdf = new SummaryPDF('P', 'mm', 'A4');
+      $pdf->barangay    = 'BARANGAY SAMPLE';
+      $pdf->address     = 'Municipality of Sample, Province of Sample';
+      $pdf->period      = $periodLabel;
+      $pdf->genDate     = $generatedDate;
+      $pdf->prepBy      = $preparedBy;
+      $pdf->reportTitle = 'MONTHLY FINANCIAL SUMMARY REPORT';
+      $pdf->SetMargins(10, 52, 10);
+      $pdf->SetAutoPageBreak(true, 15);
+      $pdf->AddPage();
+  
+      // ── Collections section ──────────────────
+      $pdf->sectionHead('Income / Collections');
+      $pdf->tableHead(
+          ['Source Type', 'Transactions', 'Amount (₱)'],
+          [110, 35, 45],
+          ['L', 'C', 'R']
+      );
+      foreach ($collections as $i => $r) {
+          $pdf->tableRow(
+              [$r['label'], $r['count'], number_format($r['amount'], 2)],
+              [110, 35, 45],
+              ['L', 'C', 'R'],
+              $i % 2 === 1
+          );
+      }
+      $pdf->totalRow(
+          ['TOTAL COLLECTIONS', array_sum(array_column($collections, 'count')), number_format($totalCollections, 2)],
+          [110, 35, 45],
+          ['L', 'C', 'R']
+      );
+  
+      // ── Expenditures section ─────────────────
+      $pdf->sectionHead('Expenditures');
+      $pdf->tableHead(
+          ['Category', 'Transactions', 'Amount (₱)'],
+          [110, 35, 45],
+          ['L', 'C', 'R']
+      );
+      foreach ($expenditures as $i => $r) {
+          $pdf->tableRow(
+              [$r['label'], $r['count'], number_format($r['amount'], 2)],
+              [110, 35, 45],
+              ['L', 'C', 'R'],
+              $i % 2 === 1
+          );
+      }
+      $pdf->totalRow(
+          ['TOTAL EXPENDITURES', array_sum(array_column($expenditures, 'count')), number_format($totalExpenditures, 2)],
+          [110, 35, 45],
+          ['L', 'C', 'R']
+      );
+  
+      // ── Net balance box ──────────────────────
+      $netLabel = $netBalance >= 0 ? 'Net Surplus' : 'Net Deficit';
+      $pdf->netBox($netLabel, $netBalance);
+  
+      // ── Signature block ──────────────────────
+      $pdf->Ln(10);
+      $pdf->SetFont('Arial', '', 8);
+      $pdf->SetTextColor(102, 112, 133);
+      $pdf->Cell(95, 5, 'Prepared by:', 0, 0, 'C');
+      $pdf->Cell(95, 5, 'Noted by:', 0, 1, 'C');
+      $pdf->Ln(12);
+      $pdf->SetDrawColor(11, 37, 69);
+      $pdf->Line(20, $pdf->GetY(), 95, $pdf->GetY());
+      $pdf->Line(115, $pdf->GetY(), 190, $pdf->GetY());
+      $pdf->Ln(1);
+      $pdf->SetFont('Arial', 'B', 8);
+      $pdf->SetTextColor(11, 37, 69);
+      $pdf->Cell(95, 4, 'JUAN DELA CRUZ', 0, 0, 'C');
+      $pdf->Cell(95, 4, 'MARIA SANTOS',   0, 1, 'C');
+      $pdf->SetFont('Arial', '', 7);
+      $pdf->SetTextColor(102, 112, 133);
+      $pdf->Cell(95, 4, 'Barangay Treasurer', 0, 0, 'C');
+      $pdf->Cell(95, 4, 'Barangay Captain',   0, 1, 'C');
+  
+      $filename = 'financial_summary_' . $year . '_' . str_pad((string)$month, 2, '0', STR_PAD_LEFT) . '.pdf';
+      $pdf->Output('D', $filename);
+      exit;
+  }
+  
+  // ════════════════════════════════════════════════════════════════
+  // EXPORT: PREVIEW  (JSON for AJAX)
+  // ════════════════════════════════════════════════════════════════
+  header('Content-Type: application/json; charset=UTF-8');
+  
+  echo json_encode([
+      'period'      => $periodLabel,
+      'generated'   => $generatedDate,
+      'prepared_by' => $preparedBy,
+      'collections' => array_map(fn($r) => [
+          'label'  => $r['label'],
+          'count'  => $r['count'],
+          'amount' => number_format($r['amount'], 2),
+      ], $collections),
+      'expenditures' => array_map(fn($r) => [
+          'label'  => $r['label'],
+          'count'  => $r['count'],
+          'amount' => number_format($r['amount'], 2),
+      ], $expenditures),
+      'totals' => [
+          'collections'  => number_format($totalCollections,  2),
+          'expenditures' => number_format($totalExpenditures, 2),
+          'net_balance'  => number_format(abs($netBalance),   2),
+          'net_label'    => $netBalance >= 0 ? 'Net Surplus' : 'Net Deficit',
+          'net_positive' => $netBalance >= 0,
+      ],
+  ]);
+
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -988,7 +1448,7 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
 
       <div class="sidebar-group">
         <span class="sidebar-section-label">REPORTS</span>
-        <a class="sidebar-link" href="finance_admin.php?tab=reports">
+        <a class="sidebar-link <?= $tab === 'reports' ? 'is-active' : '' ?>" href="finance_admin.php?tab=reports">
           <i class="fa-solid fa-file-invoice-dollar"></i><span>Financial Reports</span>
         </a>
       </div>
@@ -2112,7 +2572,10 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
                 <label for="fySelect" class="bud-fy-label">Fiscal Year</label>
                 <select id="fySelect" name="fy" class="bud-select" onchange="document.getElementById('fyForm').submit()">
                   <?php for ($y = $max_year; $y >= $min_year; $y--): ?>
-                    <option value="<?= $y ?>" <?= $y === $fiscal_year ? 'selected' : '' ?>><?= $y ?></option>
+                    <option value="<?= (int)$y ?>"
+                      <?= ((int)$y === (int)$fiscal_year) ? 'selected' : '' ?>>
+                      <?= $y ?>
+                    </option>
                   <?php endfor; ?>
                 </select>
               </form>
@@ -2393,6 +2856,202 @@ $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >
           </tfoot>
         </table>
       </div>
+    
+    <?php elseif ($tab === 'reports'): ?>
+      <main class="resident-main" id="reports">
+        <!-- ── Page Header ── -->
+        <div class="rpt-page-header">
+          <div>
+            <h1 class="rpt-page-title">
+              <i class="ti ti-file-text" aria-hidden="true"></i>
+              Financial Reports
+            </h1>
+            <p class="rpt-page-sub">Generate official statements for Barangay Captain, Municipal Treasurer &amp; DILG.</p>
+          </div>
+        </div>
+
+        <section class="col-section">
+          <!-- ── Generator Card ── -->
+          <div class="rpt-card rpt-generator">
+      
+            <div class="rpt-card-head">
+              <span class="rpt-card-label">Report Generator</span>
+            </div>
+      
+            <div class="rpt-form-grid">
+      
+              <!-- Report Type -->
+              <div class="rpt-field rpt-field--span2">
+                <label class="rpt-label" for="rpt-type">Report Type</label>
+                <div class="rpt-select-wrap">
+                  <select class="rpt-select" id="rpt-type" onchange="rptHandleTypeChange(this.value)">
+                    <option value="">— Select a report type —</option>
+                    <option value="monthly-collections">Monthly Collections Report</option>
+                    <option value="monthly-expenditures">Monthly Expenditures Report</option>
+                    <option value="monthly-summary">Monthly Financial Summary</option>
+                    <option value="annual-budget">Annual Budget Utilization</option>
+                    <option value="annual-income">Annual Income Statement</option>
+                  </select>
+                  <i class="ti ti-chevron-down rpt-select-icon" aria-hidden="true"></i>
+                </div>
+                <!-- Report description badge -->
+                <div class="rpt-desc-badge" id="rpt-desc" style="display:none"></div>
+              </div>
+      
+              <!-- Period selectors (shown/hidden per type) -->
+              <div class="rpt-field" id="rpt-month-wrap">
+                <label class="rpt-label" for="rpt-month">Month</label>
+                <div class="rpt-select-wrap">
+                  <?php
+                  $currentMonth = (int)date('n');
+
+                  $months = [
+                    1=>'January',2=>'February',3=>'March',4=>'April',
+                    5=>'May',6=>'June',7=>'July',8=>'August',
+                    9=>'September',10=>'October',11=>'November',12=>'December'
+                  ];
+                  ?>
+
+                  <select class="rpt-select" id="rpt-month">
+                  <?php foreach ($months as $num => $name): ?>
+                    <option value="<?= $num ?>" <?= $num === $currentMonth ? 'selected' : '' ?>>
+                      <?= $name ?>
+                    </option>
+                  <?php endforeach; ?>
+                  </select>
+                  <i class="ti ti-chevron-down rpt-select-icon" aria-hidden="true"></i>
+                </div>
+              </div>
+      
+              <div class="rpt-field" id="rpt-year-wrap">
+                <label class="rpt-label" for="rpt-year">Year</label>
+                <div class="rpt-select-wrap">
+                  <select class="rpt-select" id="rpt-year">
+                    <?php
+                      $currentYear = (int)date('Y');
+                      for ($y = $currentYear; $y >= $currentYear - 5; $y--) {
+                        echo "<option value='$y'>$y</option>";
+                      }
+                    ?>
+                  </select>
+                  <i class="ti ti-chevron-down rpt-select-icon" aria-hidden="true"></i>
+                </div>
+              </div>
+      
+            </div><!-- /rpt-form-grid -->
+      
+            <!-- Action bar -->
+            <div class="rpt-actions" id="rpt-actions" style="display:none">
+              <button class="rpt-btn rpt-btn--primary" onclick="rptPreview()">
+                <i class="ti ti-eye" aria-hidden="true"></i> Preview Report
+              </button>
+              <button class="rpt-btn rpt-btn--outline" id="rpt-pdf-btn" onclick="rptExport('pdf')">
+                <i class="ti ti-file-type-pdf" aria-hidden="true"></i> Export PDF
+              </button>
+              <button class="rpt-btn rpt-btn--outline" id="rpt-csv-btn" onclick="rptExport('csv')">
+                <i class="ti ti-table-export" aria-hidden="true"></i> Export CSV
+              </button>
+              <button class="rpt-btn rpt-btn--ghost" id="rpt-print-btn" onclick="rptPrint()">
+                <i class="ti ti-printer" aria-hidden="true"></i> Print
+              </button>
+            </div>
+      
+          </div><!-- /rpt-generator -->
+      
+          <!-- ── Report Type Cards ── -->
+          <div class="rpt-types-grid">
+      
+            <button class="rpt-type-card" onclick="rptSelectType('monthly-collections')">
+              <span class="rpt-type-icon rpt-type-icon--teal"><i class="ti ti-coins" aria-hidden="true"></i></span>
+              <span class="rpt-type-name">Monthly Collections</span>
+              <span class="rpt-type-badge rpt-badge--teal">PDF + CSV</span>
+              <span class="rpt-type-desc">OR numbers, amounts &amp; source types</span>
+            </button>
+      
+            <button class="rpt-type-card" onclick="rptSelectType('monthly-expenditures')">
+              <span class="rpt-type-icon rpt-type-icon--amber"><i class="ti ti-receipt" aria-hidden="true"></i></span>
+              <span class="rpt-type-name">Monthly Expenditures</span>
+              <span class="rpt-type-badge rpt-badge--teal">PDF + CSV</span>
+              <span class="rpt-type-desc">Category, payee, amount &amp; approval</span>
+            </button>
+      
+            <button class="rpt-type-card" onclick="rptSelectType('monthly-summary')">
+              <span class="rpt-type-icon rpt-type-icon--blue"><i class="ti ti-chart-bar" aria-hidden="true"></i></span>
+              <span class="rpt-type-name">Monthly Financial Summary</span>
+              <span class="rpt-type-badge rpt-badge--blue">PDF only</span>
+              <span class="rpt-type-desc">Income vs Expenses &amp; net surplus/deficit</span>
+            </button>
+      
+            <button class="rpt-type-card" onclick="rptSelectType('annual-budget')">
+              <span class="rpt-type-icon rpt-type-icon--gold"><i class="ti ti-layout-list" aria-hidden="true"></i></span>
+              <span class="rpt-type-name">Annual Budget Utilization</span>
+              <span class="rpt-type-badge rpt-badge--blue">PDF only</span>
+              <span class="rpt-type-desc">Budget vs actual per category &amp; % utilization</span>
+            </button>
+      
+            <button class="rpt-type-card" onclick="rptSelectType('annual-income')">
+              <span class="rpt-type-icon rpt-type-icon--danger"><i class="ti ti-report-analytics" aria-hidden="true"></i></span>
+              <span class="rpt-type-name">Annual Income Statement</span>
+              <span class="rpt-type-badge rpt-badge--blue">PDF only</span>
+              <span class="rpt-type-desc">Full-year collections vs expenditures &amp; net balance</span>
+            </button>
+      
+          </div><!-- /rpt-types-grid -->
+      
+          <!-- ── Preview Panel (hidden until Preview is clicked) ── -->
+          <div class="rpt-preview-panel" id="rpt-preview-panel" style="display:none">
+      
+            <div class="rpt-card-head rpt-preview-head">
+              <span class="rpt-card-label" id="rpt-preview-label">Report Preview</span>
+              <button class="rpt-close-btn" onclick="rptClosePreview()" aria-label="Close preview">
+                <i class="ti ti-x" aria-hidden="true"></i>
+              </button>
+            </div>
+      
+            <!-- Letterhead -->
+            <div class="rpt-letterhead" id="rpt-letterhead">
+              <div class="rpt-lh-logo">
+                <i class="ti ti-building-community" style="font-size:36px" aria-hidden="true"></i>
+              </div>
+              <div class="rpt-lh-text">
+                <p class="rpt-lh-brgy">Republic of the Philippines</p>
+                <p class="rpt-lh-name">BARANGAY SAMPLE</p>
+                <p class="rpt-lh-address">Municipality of Sample, Province of Sample</p>
+              </div>
+            </div>
+      
+            <!-- Report meta row -->
+            <div class="rpt-meta-row" id="rpt-meta-row"></div>
+      
+            <!-- Data table -->
+            <div class="rpt-table-wrap">
+              <table class="rpt-table" id="rpt-preview-table">
+                <thead id="rpt-thead"></thead>
+                <tbody id="rpt-tbody"></tbody>
+                <tfoot id="rpt-tfoot"></tfoot>
+              </table>
+            </div>
+      
+            <!-- Signature block -->
+            <div class="rpt-sig-block">
+              <div class="rpt-sig-col">
+                <div class="rpt-sig-line"></div>
+                <p class="rpt-sig-name">JUAN DELA CRUZ</p>
+                <p class="rpt-sig-title">Barangay Treasurer</p>
+              </div>
+              <div class="rpt-sig-col">
+                <div class="rpt-sig-line"></div>
+                <p class="rpt-sig-name">MARIA SANTOS</p>
+                <p class="rpt-sig-title">Barangay Captain</p>
+              </div>
+            </div>
+      
+          </div>
+        </section><!-- /col-section -->
+
+        <!-- Toast -->
+        <div id="colToast"></div>
+      </main>
     <?php endif; ?>
   </div>
 
