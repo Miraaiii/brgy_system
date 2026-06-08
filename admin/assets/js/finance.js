@@ -284,8 +284,16 @@ async function recSubmit() {
   fd.append('notes',         notes);
 
   try {
-    const res  = await fetch('finance_admin.php?tab=record', { method: 'POST', body: fd });
-    const data = await res.json();
+    const res = await fetch('finance_admin.php?tab=record', {
+      method: 'POST',
+      body: fd
+    });
+
+    const text = await res.text();
+    console.log(text);
+
+    // TEMPORARY
+    return;
     if (data.success) {
       colToast(`Payment saved — ${data.or_number}`, 'ok');
       recReset();
@@ -652,14 +660,21 @@ function rptHandleTypeChange(val){
   const actions = document.getElementById('rpt-actions');
   const pdfBtn  = document.getElementById('rpt-pdf-btn');
   const csvBtn  = document.getElementById('rpt-csv-btn');
- 
-  if(!val){ desc.style.display='none'; actions.style.display='none'; return; }
- 
+
+  if (!desc || !mWrap || !actions || !pdfBtn || !csvBtn) {
+      return;
+  }
+
+  if(!val){
+      desc.style.display = 'none';
+      actions.style.display = 'none';
+      return;
+  }
+
   desc.textContent = RPT_DESCS[val] || '';
   desc.style.display = 'block';
   mWrap.style.display = RPT_MONTHLY.includes(val) ? 'flex' : 'none';
   actions.style.display = 'flex';
- 
   csvBtn.style.display = RPT_CSV_OK.includes(val) ? 'inline-flex' : 'none';
 }
  

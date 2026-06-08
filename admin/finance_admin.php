@@ -1,5 +1,7 @@
 <?php
+require_once __DIR__ . '/includes/admin_layout.php';
 
+file_put_contents('debug.txt', "REACHED FILE\n", FILE_APPEND);
 include '../config/connection.php';
 include '../includes/auth_check.php';
 
@@ -8,10 +10,31 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
+$isRecordAjax = $_SERVER['REQUEST_METHOD'] === 'POST'
+    && ($_POST['_rec_action'] ?? '') === 'record_payment';
+
+if (!$isRecordAjax) {
+    require_once __DIR__ . '/includes/admin_layout.php';
+}
+
 requireRole(['treasurer']);
 
 
 $tab = $_GET['tab'] ?? 'dashboard';
+
+$current_user = [
+    'id'       => $_SESSION['user_id'],
+    'email'    => $_SESSION['email'],
+    'role'     => $_SESSION['role'],
+    'fullname' => 'Treasurer',
+    'username' => $_SESSION['email']
+];
+
+adm_page_start(
+    'Finance Management',
+    $tab,
+    $current_user
+);
 
 /* Collections */
 if (!function_exists('col_sanitize')) {
@@ -807,6 +830,17 @@ $stmt = $pdo->query("
 
 $year_expenditures = (float)$stmt->fetchColumn();
 
+/* Pending Expenditures */
+$stmt = $pdo->prepare("
+    SELECT *
+    FROM expenditures
+    WHERE approval_status = 'pending'
+    ORDER BY created_at DESC
+");
+$stmt->execute();
+
+$pending_expenditures = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
 /* Budget Utilization % */
 $budget_utilization = 0;
 
@@ -1294,8 +1328,8 @@ if ($tab === 'reports' && isset($_GET['export'])) {
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet" />
-  <link rel="stylesheet" href="../assets/css/resident_dashboard.css" />
   <link rel="stylesheet" href="assets/css/finance.css">
+  <link rel="stylesheet" href="assets/css/secretary.css?v=20260607b">
   
   <style>
     .welcome-meta {
@@ -1399,185 +1433,27 @@ if ($tab === 'reports' && isset($_GET['export'])) {
   </style>
 </head>
 <body>
-  <aside class="resident-sidebar" id="residentSidebar" aria-label="Resident sidebar">
-    <a class="sidebar-brand" href="#" aria-label="Go to dashboard">
-      <span class="sidebar-brand__seal"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i></span>
-      <span>
-        <strong>Brgy. Sta. Rosa 1</strong>
-        <small>Resident Portal</small>
-      </span>
-    </a>
 
-    <nav class="sidebar-menu" aria-label="Treasurer menu">
-
-      <div class="sidebar-group">
-        <a class="sidebar-link <?= ($tab === 'dashboard' || $tab === '') ? 'is-active' : '' ?>" href="finance_admin.php?tab=dashboard">
-          <i class="fa-solid fa-house"></i><span>Dashboard</span>
-        </a>
-      </div>
-
-      <div class="sidebar-group">
-        <span class="sidebar-section-label">COLLECTIONS</span>
-        <a class="sidebar-link <?= $tab === 'collections' ? 'is-active' : '' ?>" href="finance_admin.php?tab=collections">
-          <i class="fa-solid fa-money-bill-transfer"></i><span>All Collections</span>
-        </a>
-        <a class="sidebar-link <?= $tab === 'record' ? 'is-active' : '' ?>" href="finance_admin.php?tab=record">
-          <i class="fa-solid fa-cash-register"></i><span>Record Payment</span>
-        </a>
-        <a class="sidebar-link <?= $tab === 'receipts' ? 'is-active' : '' ?>" href="finance_admin.php?tab=receipts">
-          <i class="fa-solid fa-file-invoice-dollar"></i><span>Official Receipts</span>
-        </a>
-      </div>
-
-      <div class="sidebar-group">
-        <span class="sidebar-section-label">EXPENDITURES</span>
-        <a class="sidebar-link <?= $tab === 'expenditures' ? 'is-active' : '' ?>" href="finance_admin.php?tab=expenditures">
-          <i class="fa-solid fa-money-bill-wave"></i><span>All Expenditures</span>
-        </a>
-        <a class="sidebar-link <?= $tab === 'add-exp' ? 'is-active' : '' ?>" href="finance_admin.php?tab=add-exp">
-          <i class="fa-solid fa-circle-plus"></i><span>Add Expenditure</span>
-        </a>
-      </div>
-
-      <div class="sidebar-group">
-        <span class="sidebar-section-label">BUDGET</span>
-        <a class="sidebar-link <?= $tab === 'budget' ? 'is-active' : '' ?>" href="finance_admin.php?tab=budget">
-          <i class="fa-solid fa-chart-pie"></i><span>Budget Management</span>
-        </a>
-      </div>
-
-      <div class="sidebar-group">
-        <span class="sidebar-section-label">REPORTS</span>
-        <a class="sidebar-link <?= $tab === 'reports' ? 'is-active' : '' ?>" href="finance_admin.php?tab=reports">
-          <i class="fa-solid fa-file-invoice-dollar"></i><span>Financial Reports</span>
-        </a>
-      </div>
-
-      <div class="sidebar-group">
-        <span class="sidebar-section-label">RECORDS</span>
-        <a class="sidebar-link" href="admin/issued.php">
-          <i class="fa-solid fa-file-lines"></i><span>Doc Issuance Log</span>
-        </a>
-        <a class="sidebar-link" href="admin/residents.php">
-          <i class="fa-solid fa-users"></i><span>Resident List</span>
-        </a>
-      </div>
-
-      <div class="sidebar-group">
-        <span class="sidebar-section-label">ACCOUNT</span>
-        <a class="sidebar-link" href="admin/profile.php">
-          <i class="fa-solid fa-user"></i><span>My Profile</span>
-        </a>
-        <a class="sidebar-link sidebar-link--danger" href="../logout.php">
-          <i class="fa-solid fa-right-from-bracket"></i><span>Logout</span>
-        </a>
-      </div>
-
-    </nav>
-
-    <div class="sidebar-completion" aria-label="Profile completion">
-      <div class="sidebar-completion__top">
-        <span>Profile completion</span>
-        <strong><?= e($profile_percent) ?>%</strong>
-      </div>
-      <div class="sidebar-progress" aria-hidden="true"><span style="width: <?= e($profile_percent) ?>%"></span></div>
-      <small><?= e($sidebar_missing_summary) ?></small>
-    </div>
-
-    <div class="sidebar-card">
-      <span class="sidebar-card__label">Office Hours</span>
-      <strong>Mon-Fri, 8:00 AM - 5:00 PM</strong>
-      <small>Barangay Hall, Sta. Rosa 1</small>
-    </div>
-  </aside>
-
-  <div class="sidebar-overlay" id="sidebarOverlay" hidden></div>
-
-  <div class="resident-shell">
-    <header class="resident-topbar">
-      <div class="topbar-left">
-        <button class="icon-button hamburger-button" id="sidebarToggle" type="button" aria-label="Open sidebar" aria-expanded="false">
-          <i class="fa-solid fa-bars" aria-hidden="true"></i>
-        </button>
-        <a class="topbar-brand" href="finance_ad.php">
-          <span class="topbar-brand__seal"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i></span>
-          <span>Brgy. Sta. Rosa 1</span>
-        </a>
-      </div>
-
-      <div class="topbar-actions">
-        <button class="icon-button theme-toggle" id="themeToggle" type="button" aria-label="Switch to dark mode" aria-pressed="false">
-          <i class="fa-solid fa-moon" aria-hidden="true"></i>
-        </button>
-
-        <div class="dropdown-wrap">
-          <button class="icon-button notification-button" id="notificationToggle" type="button" aria-label="Open notifications" aria-expanded="false" data-notification-count-url="notifications.php?count=1">
-            <i class="fa-solid fa-bell" aria-hidden="true"></i>
-            <?php if ($unread_count > 0): ?>
-              <span class="notif-badge"><?= e(min($unread_count, 9)) ?></span>
-            <?php else: ?>
-              <span class="notif-dot" aria-hidden="true"></span>
-            <?php endif; ?>
-          </button>
-          <div class="dropdown-panel notification-panel" id="notificationPanel" aria-label="Notifications">
-            <div class="dropdown-panel__header">
-              <strong>Notifications</strong>
-              <a class="text-link" href="notifications.php"><?= e($unread_count) ?> unread</a>
-            </div>
-            <div class="notification-list">
-              <?php if ($notifications): ?>
-                <?php foreach ($notifications as $notice): ?>
-                  <a class="notification-item <?= empty($notice['is_read']) ? 'is-unread' : '' ?>" href="<?= e($notice['link'] ?: '#') ?>">
-                    <span class="notification-item__icon"><i class="fa-solid fa-circle-info"></i></span>
-                    <span>
-                      <strong><?= e($notice['title']) ?></strong>
-                      <small><?= e($notice['message']) ?></small>
-                      <em><?= e(rd_date($notice['created_at'])) ?></em>
-                    </span>
-                  </a>
-                <?php endforeach; ?>
-              <?php else: ?>
-                <p class="empty-note">No notifications yet.</p>
-              <?php endif; ?>
-            </div>
-          </div>
-        </div>
-
-        <div class="dropdown-wrap">
-          <button class="profile-button" id="profileToggle" type="button" aria-label="Open profile menu" aria-expanded="false">
-            <span class="avatar"><?= e($initials) ?></span>
-            <span class="profile-button__name"><?= e($first_name) ?></span>
-            <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
-          </button>
-          <div class="dropdown-panel profile-panel" id="profilePanel" aria-label="Profile menu">
-            <div class="profile-summary">
-              <span class="avatar avatar--large"><?= e($initials) ?></span>
-              <strong><?= e($display_name) ?></strong>
-              <small><?= e($user['email']) ?></small>
-            </div>
-            <a href="profile.php"><i class="fa-solid fa-user"></i> My Profile</a>
-            <a href="profile.php#account"><i class="fa-solid fa-lock"></i> Change Password</a>
-            <a class="danger" href="../logout.php"><i class="fa-solid fa-right-from-bracket"></i> Logout</a>
-          </div>
-        </div>
-      </div>
-    </header>
+  <!-- <div class="finance-shell"> -->
 
     <?php if ($tab === 'dashboard'): ?>
-      <main class="resident-main" id="dashboard">
-        <section class="welcome-banner priority-high">
+      <div class="finance-main" id="dashboard">
+        <section class="welcome-panel">
           <div>
-            <div class="welcome-eyebrow"><?= e($today_line) ?></div>
             <h1><?= e($greeting) ?>, <?= e($first_name) ?></h1>
-            <p>Track your barangay requests, announcements, and case updates in one place.</p>
-            <div class="welcome-meta">
-              <span class="role-badge">
-                <i class="fa-solid fa-id-badge"></i> <?= e($role_label) ?>
-              </span>
-              <span class="fiscal-badge">
-                <i class="fa-solid fa-calendar-check"></i> <?= e($fiscal_year) ?>
-              </span>
-            </div>
+            <p><?= adm_e(date('l, F j, Y')) ?> - Barangay Sta. Rosa 1, Noveleta, Cavite.</p>
+          </div>
+
+          <div class="welcome-badges">
+            <span class="role-badge role-badge--gold">
+              <i class="fa-solid fa-coins" aria-hidden="true"></i>
+              <?= e($role_label) ?>
+            </span>
+
+            <span class="fiscal-badge">
+              <i class="fa-solid fa-calendar-check"></i>
+              Fiscal Year: <?= e($fiscal_year) ?>
+            </span>
           </div>
         </section>
 
@@ -1654,11 +1530,11 @@ if ($tab === 'reports' && isset($_GET['export'])) {
                 <h2>Monthly Collections</h2>
                 <small style="color: var(--text-muted, #888);">Last 6 months — collections vs expenditures</small>
               </div>
-              <a href="admin/finance.php?tab=reports" class="view-all-link">
+              <a href="finance_admin.php?tab=reports" class="btn btn--small">
                 View full report <i class="fa-solid fa-arrow-right"></i>
               </a>
             </div>
-            <div class="announcement-list">
+            <div class="announcement-list" style="position:relative; height:320px;">
               <canvas id="revenueChart"></canvas>
             </div>
           </div>
@@ -1673,10 +1549,10 @@ if ($tab === 'reports' && isset($_GET['export'])) {
                 <h2>Recent Collections</h2>
                 <small style="color: var(--text-muted, #888);">Last 8 transactions</small>
               </div>
-              <a class="text-link" href="admin/finance.php?tab=collections">View all collections</a>
+              <a class="btn btn--small" href="finance_admin.php?tab=collections">View all collections</a>
             </div>
-            <div class="quick-actions">
-              <table style="width:100%; table-layout:fixed;">
+            <div class="dash-table-wrap">
+              <table class="dash-table" style="width:100%; table-layout:fixed;">
                 <thead>
                   <tr>
                     <th>No.</th>
@@ -1688,70 +1564,48 @@ if ($tab === 'reports' && isset($_GET['export'])) {
                   </tr>
                 </thead>
                 <tbody>
-                  <tr>
-                    <td style="color:var(--text-muted);font-size:11px;">001</td>
-                    <td><span class="badge collection">Business Permit Fee</span></td>
-                    <td class="amount">₱ 2,500.00</td>
-                    <td>Juan dela Cruz</td>
-                    <td style="color:var(--text-muted);font-size:11px;">May 24, 2025</td>
-                    <td><a href="admin/finance.php?tab=collections&id=1" class="btn-view"><i class="fa-solid fa-eye"></i> View</a></td>
-                  </tr>
-                  <tr>
-                    <td style="color:var(--text-muted);font-size:11px;">002</td>
-                    <td><span class="badge collection">Document Request Fee</span></td>
-                    <td class="amount">₱ 150.00</td>
-                    <td>Maria Santos</td>
-                    <td style="color:var(--text-muted);font-size:11px;">May 23, 2025</td>
-                    <td><a href="admin/finance.php?tab=collections&id=2" class="btn-view"><i class="fa-solid fa-eye"></i> View</a></td>
-                  </tr>
-                  <tr>
-                    <td style="color:var(--text-muted);font-size:11px;">003</td>
-                    <td><span class="badge collection">Certificate Fee</span></td>
-                    <td class="amount">₱ 300.00</td>
-                    <td>Pedro Reyes</td>
-                    <td style="color:var(--text-muted);font-size:11px;">May 21, 2025</td>
-                    <td><a href="admin/finance.php?tab=collections&id=3" class="btn-view"><i class="fa-solid fa-eye"></i> View</a></td>
-                  </tr>
-                  <tr>
-                    <td style="color:var(--text-muted);font-size:11px;">004</td>
-                    <td><span class="badge collection">Barangay Clearance</span></td>
-                    <td class="amount">₱ 200.00</td>
-                    <td>Ana Gomez</td>
-                    <td style="color:var(--text-muted);font-size:11px;">May 20, 2025</td>
-                    <td><a href="admin/finance.php?tab=collections&id=4" class="btn-view"><i class="fa-solid fa-eye"></i> View</a></td>
-                  </tr>
-                  <tr>
-                    <td style="color:var(--text-muted);font-size:11px;">005</td>
-                    <td><span class="badge collection">Business Permit Fee</span></td>
-                    <td class="amount">₱ 2,500.00</td>
-                    <td>Carlos Mendoza</td>
-                    <td style="color:var(--text-muted);font-size:11px;">May 19, 2025</td>
-                    <td><a href="admin/finance.php?tab=collections&id=5" class="btn-view"><i class="fa-solid fa-eye"></i> View</a></td>
-                  </tr>
-                  <tr>
-                    <td style="color:var(--text-muted);font-size:11px;">006</td>
-                    <td><span class="badge collection">Indigency Certificate</span></td>
-                    <td class="amount">₱ 100.00</td>
-                    <td>Rosa Villanueva</td>
-                    <td style="color:var(--text-muted);font-size:11px;">May 18, 2025</td>
-                    <td><a href="admin/finance.php?tab=collections&id=6" class="btn-view"><i class="fa-solid fa-eye"></i> View</a></td>
-                  </tr>
-                  <tr>
-                    <td style="color:var(--text-muted);font-size:11px;">007</td>
-                    <td><span class="badge collection">Cedula</span></td>
-                    <td class="amount">₱ 75.00</td>
-                    <td>Jose Bautista</td>
-                    <td style="color:var(--text-muted);font-size:11px;">May 17, 2025</td>
-                    <td><a href="admin/finance.php?tab=collections&id=7" class="btn-view"><i class="fa-solid fa-eye"></i> View</a></td>
-                  </tr>
-                  <tr>
-                    <td style="color:var(--text-muted);font-size:11px;">008</td>
-                    <td><span class="badge collection">Document Request Fee</span></td>
-                    <td class="amount">₱ 150.00</td>
-                    <td>Luisa Fernandez</td>
-                    <td style="color:var(--text-muted);font-size:11px;">May 16, 2025</td>
-                    <td><a href="admin/finance.php?tab=collections&id=8" class="btn-view"><i class="fa-solid fa-eye"></i> View</a></td>
-                  </tr>
+                  <?php if (!empty($collections)): ?>
+                    <?php foreach (array_slice($collections, 0, 8) as $index => $collection): ?>
+                      <tr>
+                        <td style="color:var(--text-muted);font-size:11px;">
+                          <?= str_pad($index + 1, 3, '0', STR_PAD_LEFT) ?>
+                        </td>
+
+                        <td>
+                          <span class="badge collection">
+                            <?= col_sanitize(col_type_label($collection['source_type'])) ?>
+                          </span>
+                        </td>
+
+                        <td class="amount">
+                          <?= col_currency((float)$collection['amount']) ?>
+                        </td>
+
+                        <td>
+                          <?= col_sanitize($collection['resident_name']) ?>
+                        </td>
+
+                        <td style="color:var(--text-muted);font-size:11px;">
+                          <?= date('M d, Y', strtotime($collection['collected_at'])) ?>
+                        </td>
+
+                        <td>
+                          <a href="finance_admin.php?tab=collections&id=<?= (int)$collection['id'] ?>"
+                            class="btn-view">
+                            <i class="fa-solid fa-eye"></i> View
+                          </a>
+                        </td>
+                      </tr>
+                    <?php endforeach; ?>
+
+                  <?php else: ?>
+                    <tr>
+                      <td colspan="6"
+                          style="text-align:center;padding:24px;color:var(--text-muted);">
+                        No collection records found.
+                      </td>
+                    </tr>
+                  <?php endif; ?>
                 </tbody>
               </table>
             </div>
@@ -1773,8 +1627,8 @@ if ($tab === 'reports' && isset($_GET['export'])) {
               Expenditures over ₱5,000 require Captain approval before disbursement.
             </div>
 
-            <div style="display:block;">
-              <table style="width:100%; table-layout:fixed;">
+            <div class="dash-table-wrap" style="display:block;">
+              <table class="dash-table" style="width:100%; table-layout:fixed; text-align: center;">
                 <thead>
                   <tr>
                     <th>Category</th>
@@ -1813,7 +1667,7 @@ if ($tab === 'reports' && isset($_GET['export'])) {
                 <h2>Quick Actions</h2>
               </div>
             </div>
-            <div style="display: flex; gap: 16px; flex-wrap: wrap; padding: 8px 0;">
+            <div style="display: flex; gap: 16px; flex-wrap: wrap; padding: 8px 8px;">
               <a href="admin/finance.php?tab=record" class="quick-action-btn">
                 <i class="fa-solid fa-money-bill-wave"></i>
                 <span>Record Collection</span>
@@ -1833,10 +1687,10 @@ if ($tab === 'reports' && isset($_GET['export'])) {
             </div>
           </div>
         </section>
-      </main>
+      </div>
 
     <?php elseif ($tab === 'collections'): ?>
-      <main class="resident-main" id="collections">
+      <div class="finance-main" id="collections">
         <!-- paste the <section class="col-section"> block here -->
         <section class="col-section">
 
@@ -2069,10 +1923,10 @@ if ($tab === 'reports' && isset($_GET['export'])) {
             </div>
           </div>
         </div>
-      </main>
+      </div>
 
     <?php elseif ($tab === 'record'): ?>
-      <main class="resident-main" id="record">
+      <div class="finance-main" id="record">
         <!-- paste the <section class="col-section"> block here -->
         <section class="col-section">
           <!-- Header -->
@@ -2227,10 +2081,10 @@ if ($tab === 'reports' && isset($_GET['export'])) {
 
         <!-- Toast -->
         <div id="colToast"></div>
-      </main>
+      </div>
 
     <?php elseif ($tab === 'expenditures'): ?>
-      <main class="resident-main" id="expenditures">
+      <div class="finance-main" id="expenditures">
         <section class="col-section">
           <div class="exp-header">
             <h2 class="exp-title">
@@ -2422,10 +2276,10 @@ if ($tab === 'reports' && isset($_GET['export'])) {
 
         <!-- Toast -->
         <div id="colToast"></div>
-      </main>
+      </div>
 
     <?php elseif ($tab === 'add-exp'): ?>
-      <main class="resident-main" id="add-exp">
+      <div class="finance-main" id="add-exp">
         <section class="col-section">
           <?php if ($success): ?>
           <script>
@@ -2555,10 +2409,10 @@ if ($tab === 'reports' && isset($_GET['export'])) {
 
         <!-- Toast -->
         <div id="colToast"></div>
-      </main>
+      </div>
 
     <?php elseif ($tab === 'budget'): ?>
-      <main class="resident-main" id="budget">
+      <div class="finance-main" id="budget">
         <!-- paste the <section class="col-section"> block here -->
         <section class="col-section">
           <div class="bud-header">
@@ -2716,7 +2570,7 @@ if ($tab === 'reports' && isset($_GET['export'])) {
 
         <!-- Toast -->
         <div id="colToast"></div>
-      </main>
+      </div>
 
       <!-- Add Modal -->
       <div class="col-backdrop" id="budAddModal">
@@ -2858,7 +2712,7 @@ if ($tab === 'reports' && isset($_GET['export'])) {
       </div>
     
     <?php elseif ($tab === 'reports'): ?>
-      <main class="resident-main" id="reports">
+      <div class="finance-main" id="reports">
         <!-- ── Page Header ── -->
         <div class="rpt-page-header">
           <div>
@@ -3051,11 +2905,12 @@ if ($tab === 'reports' && isset($_GET['export'])) {
 
         <!-- Toast -->
         <div id="colToast"></div>
-      </main>
+      </div>
     <?php endif; ?>
-  </div>
+  <!-- </div> -->
 
   <script src="../assets/js/resident_dashboard.js"></script>
+  <script src="assets/js/secretary.js?v=20260605c"></script>
   <script src="assets/js/finance.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 
@@ -3116,6 +2971,7 @@ if ($tab === 'reports' && isset($_GET['export'])) {
         },
         options: {
           responsive: true,
+          maintainAspectRatio: false,
           interaction: { mode: 'index', intersect: false },
           plugins: {
             legend: {

@@ -163,6 +163,17 @@ body.dark-mode {
     var(--bg);
 }
 
+.finance-main {
+  width: 100%;
+  padding: 24px 28px 40px;
+}
+
+.finance-shell {
+  margin-left: 264px;
+  min-height: 100vh;
+  background: var(--bg, #0f172a);
+}
+
 /* ============================================================
    WELCOME / BADGE COMPONENTS
    ============================================================ */
@@ -172,6 +183,14 @@ body.dark-mode {
   gap: 10px;
   margin-top: 12px;
   flex-wrap: wrap;
+}
+
+.welcome-banner {
+  background: linear-gradient(135deg, #0b2545 0%, #143a5f 62%, #c9961e 100%);
+  border-radius: 16px;
+  padding: clamp(20px, 2.2vw, 28px);
+  margin-bottom: 16px;
+  color: #fff;
 }
 
 .role-badge {
@@ -207,6 +226,32 @@ body.dark-mode {
 /* ============================================================
    STAT GRID & QUICK ACTIONS
    ============================================================ */
+
+.panel-grid-full {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.dashboard-panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-soft);
+  margin-bottom: 18px;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: var(--card-pad);
+  border-bottom: 1px solid var(--line);
+}
+
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(1, 1fr);
@@ -214,6 +259,75 @@ body.dark-mode {
 }
 
 .status-card { min-width: 0; }
+
+.status-card {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.status-card__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  font-size: 18px;
+}
+
+.status-card--success .status-card__icon { background: rgba(34,197,94,0.15); color: #22c55e; }
+.status-card--warning .status-card__icon { background: rgba(234,179,8,0.15);  color: #eab308; }
+.status-card--danger  .status-card__icon { background: rgba(239,68,68,0.15);  color: #ef4444; }
+.status-card--info    .status-card__icon { background: rgba(99,102,241,0.15); color: #6366f1; }
+
+.finance-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.finance-card__body strong {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.finance-card__body small {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.progress-bar,
+.progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--brand), var(--gold-light));
+}
+
+#collections-chart {
+  padding: 20px;
+}
+
+#collections-chart .announcement-list {
+  position: relative;
+  width: 100%;
+}
+
+#revenueChart {
+  width: 100% !important;
+  height: auto !important;
+  max-height: 320px;
+}
 
 .quick-action-btn {
   display: flex;
@@ -255,7 +369,10 @@ body.dark-mode {
 /* ============================================================
    COLLECTIONS TABLE  (.col-*)
    ============================================================ */
-.col-section { font-family: inherit; color: var(--text); }
+.col-section { 
+  font-family: inherit; 
+  color: var(--text); 
+}
 
 /* Page header */
 .col-header {
@@ -574,6 +691,65 @@ body:not(.dark-mode) .rec-or-preview {
 }
 .col-no-res { color: var(--faint); font-style: italic; }
 
+.dash-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+}
+
+.dash-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  text-align: center;
+}
+
+.dash-table thead tr {
+  background: var(--surface-soft);
+  border-bottom: 1px solid var(--line);
+}
+
+.dash-table thead th {
+  padding: 10px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  text-align: center;
+}
+
+.dash-table tbody tr {
+  border-bottom: 1px solid var(--line);
+  transition: background var(--transition);
+}
+
+.dash-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.dash-table tbody tr:hover {
+  background: var(--surface-soft);
+}
+
+.dash-table tbody td {
+  padding: 12px 14px;
+  color: var(--text);
+  vertical-align: middle;
+}
+
+.dash-table .col-amount {
+  font-weight: 700;
+  color: var(--danger);
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-table .col-empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 28px 0;
+}
+
 /* Badges */
 .col-badge {
   display: inline-block;
@@ -758,7 +934,7 @@ body:not(.dark-mode) .rec-or-preview {
 /* ============================================================
    RECORD PAYMENT  (.rec-*)
    ============================================================ */
-.rec-wrap { max-width: 760px; }
+.rec-wrap { max-width: 100%; }
 
 .rec-or-preview {
   display: flex;

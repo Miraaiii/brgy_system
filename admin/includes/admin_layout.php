@@ -181,10 +181,27 @@ function adm_page_start($title, $active, array $user, $page_class = '') {
         <?php adm_nav_item($active, 'settings', 'settings.php', 'fa-gear', 'System Settings'); ?>
         <?php adm_nav_item($active, 'audit', 'audit.php', 'fa-shield-halved', 'Audit Trail'); ?>
       <?php elseif ($role === 'treasurer'): ?>
-        <span class="admin-nav__section">Finance</span>
-        <?php adm_nav_item($active, 'dashboard', 'dashboard.php', 'fa-chart-line', 'Dashboard'); ?>
-        <?php adm_nav_item($active, 'finance', 'finance.php', 'fa-wallet', 'Financial Overview', $expenditure_approvals); ?>
-        <?php adm_nav_item($active, 'reports', 'reports.php', 'fa-chart-pie', 'Reports'); ?>
+        <span class="admin-nav__section">Dashboard</span>
+        <?php adm_nav_item($active, 'dashboard', 'finance_admin.php?tab=dashboard', 'fa-house', 'Dashboard'); ?>
+
+        <span class="admin-nav__section">Collections</span>
+        <?php adm_nav_item($active, 'collections', 'finance_admin.php?tab=collections', 'fa-money-bill-transfer', 'All Collections'); ?>
+        <?php adm_nav_item($active, 'record', 'finance_admin.php?tab=record', 'fa-cash-register', 'Record Payment'); ?>
+        <?php adm_nav_item($active, 'receipts', 'finance_admin.php?tab=receipts', 'fa-file-invoice-dollar', 'Official Receipts'); ?>
+
+        <span class="admin-nav__section">Expenditures</span>
+        <?php adm_nav_item($active, 'expenditures', 'finance_admin.php?tab=expenditures', 'fa-money-bill-wave', 'All Expenditures'); ?>
+        <?php adm_nav_item($active, 'add-exp', 'finance_admin.php?tab=add-exp', 'fa-circle-plus', 'Add Expenditure'); ?>
+
+        <span class="admin-nav__section">Budget</span>
+        <?php adm_nav_item($active, 'budget', 'finance_admin.php?tab=budget', 'fa-chart-pie', 'Budget Management'); ?>
+
+        <span class="admin-nav__section">Reports</span>
+        <?php adm_nav_item($active, 'reports', 'finance_admin.php?tab=reports', 'fa-file-invoice-dollar', 'Financial Reports'); ?>
+
+        <span class="admin-nav__section">Records</span>
+        <?php adm_nav_item($active, 'issued', 'issued.php', 'fa-file-lines', 'Doc Issuance Log'); ?>
+        <?php adm_nav_item($active, 'residents', 'residents.php', 'fa-users', 'Resident List'); ?>
       <?php elseif (in_array($role, ['kagawad', 'sk_chair', 'sk_kagawad'], true)): ?>
         <span class="admin-nav__section">Programs</span>
         <?php adm_nav_item($active, 'dashboard', 'dashboard.php', 'fa-chart-line', 'Dashboard'); ?>
