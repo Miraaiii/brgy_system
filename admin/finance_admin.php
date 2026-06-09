@@ -1,1322 +1,1321 @@
 <?php
-require_once __DIR__ . '/includes/admin_layout.php';
-
-file_put_contents('debug.txt', "REACHED FILE\n", FILE_APPEND);
-include '../config/connection.php';
-include '../includes/auth_check.php';
-
-if (!isset($_SESSION['user_id'])) {
-    header("Location: ../login.php");
-    exit();
-}
-
-$isRecordAjax = $_SERVER['REQUEST_METHOD'] === 'POST'
-    && ($_POST['_rec_action'] ?? '') === 'record_payment';
-
-if (!$isRecordAjax) {
-    require_once __DIR__ . '/includes/admin_layout.php';
-}
-
-requireRole(['treasurer']);
-
-
-$tab = $_GET['tab'] ?? 'dashboard';
-
-$current_user = [
-    'id'       => $_SESSION['user_id'],
-    'email'    => $_SESSION['email'],
-    'role'     => $_SESSION['role'],
-    'fullname' => 'Treasurer',
-    'username' => $_SESSION['email']
-];
-
-adm_page_start(
-    'Finance Management',
-    $tab,
-    $current_user
-);
-
-/* Collections */
-if (!function_exists('col_sanitize')) {
-    function col_sanitize(string $v): string {
-        return htmlspecialchars(trim($v), ENT_QUOTES, 'UTF-8');
-    }
-}
-if (!function_exists('col_currency')) {
-    function col_currency(float $n): string {
-        return '₱ ' . number_format($n, 2);
-    }
-}
-if (!function_exists('col_type_label')) {
-    function col_type_label(string $t): string {
-        return match($t) {
-            'document_fee'    => 'Document Fee',
-            'business_permit' => 'Business Permit',
-            'cedula'          => 'Cedula',
-            default           => 'Other',
-        };
-    }
-}
-if (!function_exists('col_type_badge')) {
-    function col_type_badge(string $t): string {
-        return match($t) {
-            'document_fee'    => 'cbadge-doc',
-            'business_permit' => 'cbadge-biz',
-            'cedula'          => 'cbadge-ced',
-            default           => 'cbadge-other',
-        };
-    }
-}
-
-// ── Handle AJAX void POST (returns JSON and exits) ───────────────────────────
-if (
-    $_SERVER['REQUEST_METHOD'] === 'POST' &&
-    ($_POST['_col_action'] ?? '') === 'void' &&
-    ($_GET['tab'] ?? '') === 'collections'
-) {
-    header('Content-Type: application/json');
-    if (!in_array($currentUser['role'], ['treasurer', 'admin'], true)) {
-        echo json_encode(['success' => false, 'message' => 'Unauthorized.']);
-        exit;
-    }
-    $vid    = (int) ($_POST['id']     ?? 0);
-    $reason = trim($_POST['reason']  ?? '');
-    if (!$vid || $reason === '') {
-        echo json_encode(['success' => false, 'message' => 'ID and reason are required.']);
-        exit;
-    }
-    $s = $pdo->prepare("
-        UPDATE collections
-        SET    voided = 1, void_reason = :reason,
-               voided_by = :by, voided_at = NOW()
-        WHERE  id = :id AND voided = 0
-    ");
-    $s->execute([':reason' => $reason, ':by' => $currentUser['id'], ':id' => $vid]);
-    echo json_encode($s->rowCount()
-        ? ['success' => true,  'message' => 'Collection voided successfully.']
-        : ['success' => false, 'message' => 'Record not found or already voided.']
-    );
-    exit;
-}
-
-// ── Handle CSV export (streams file and exits) ────────────────────────────────
-if (($_GET['tab'] ?? '') === 'collections' && ($_GET['export'] ?? '') === 'csv') {
-    $allowed = ['all','document_fee','business_permit','cedula','other'];
-    $xType   = in_array($_GET['type'] ?? 'all', $allowed, true) ? ($_GET['type'] ?? 'all') : 'all';
-    $xFrom   = !empty($_GET['date_from']) ? date('Y-m-d', strtotime($_GET['date_from'])) : date('Y-m-01');
-    $xTo     = !empty($_GET['date_to'])   ? date('Y-m-d', strtotime($_GET['date_to']))   : date('Y-m-d');
-    $xSearch = trim($_GET['search'] ?? '');
-
-    $xParams = [':date_from' => $xFrom, ':date_to' => $xTo];
-    $xType_q = $xType !== 'all' ? 'AND c.source_type = :source_type' : '';
-    if ($xType !== 'all') $xParams[':source_type'] = $xType;
-    $xSearch_q = '';
-    if ($xSearch !== '') {
-        $xSearch_q = "AND (c.or_number LIKE :search OR CONCAT(r.first_name,' ',r.last_name) LIKE :search)";
-        $xParams[':search'] = '%' . $xSearch . '%';
-    }
-
-    $xs = $pdo->prepare("
-        SELECT c.or_number,
-               c.source_type,
-               CONCAT(COALESCE(r.first_name,''),' ',COALESCE(r.last_name,'')) AS resident,
-               c.amount, c.description, c.collected_at,
-               u.username AS collected_by,
-               IF(c.voided,'VOIDED','Active') AS status,
-               c.void_reason
-        FROM   collections c
-        LEFT JOIN residents r ON r.id = c.resident_id
-        JOIN   users u        ON u.id = c.collected_by
-        WHERE  DATE(c.collected_at) BETWEEN :date_from AND :date_to
-               $xType_q $xSearch_q
-        ORDER  BY c.collected_at DESC
-    ");
-    $xs->execute($xParams);
-
-    header('Content-Type: text/csv');
-    header('Content-Disposition: attachment; filename="collections_' . $xFrom . '_to_' . $xTo . '.csv"');
-    header('Pragma: no-cache');
-    $out = fopen('php://output', 'w');
-    fputcsv($out, ['OR Number','Source Type','Resident','Amount','Description',
-                   'Date Collected','Collected By','Status','Void Reason']);
-    foreach ($xs->fetchAll(PDO::FETCH_ASSOC) as $xr) {
-        $xr['amount'] = number_format((float)$xr['amount'], 2, '.', '');
-        fputcsv($out, $xr);
-    }
-    fclose($out);
-    exit;
-}
-
-$typeClause = '';
-$searchClause = '';
-
-/* Filters */
-$allowed    = ['all','document_fee','business_permit','cedula','other'];
-$sourceType = in_array($_GET['type'] ?? 'all', $allowed, true) ? ($_GET['type'] ?? 'all') : 'all';
-$dateFrom = !empty($_GET['date_from'])
-    ? $_GET['date_from'] . " 00:00:00"
-    : date('Y-m-01 00:00:00');
-
-$dateTo = !empty($_GET['date_to'])
-    ? $_GET['date_to'] . " 23:59:59"
-    : date('Y-m-d 23:59:59');
-$search     = trim($_GET['search'] ?? '');
-
-if ($sourceType !== 'all') {
-    $typeClause = 'AND c.source_type = :source_type';
-    $params[':source_type'] = $sourceType;
-}
-if ($search !== '') {
-    $searchClause = "AND (c.or_number LIKE :search OR CONCAT(r.first_name,' ',r.last_name) LIKE :search)";
-    $params[':search'] = '%' . $search . '%';
-}
-
-$collections = [];
-
-$where = [];
-$params = [];
-
-$where[] = "c.collected_at BETWEEN :date_from AND :date_to";
-$params[':date_from'] = $dateFrom;
-$params[':date_to']   = $dateTo;
-
-if ($sourceType !== 'all') {
-    $where[] = "c.source_type = :source_type";
-    $params[':source_type'] = $sourceType;
-}
-
-if ($search !== '') {
-    $where[] = "(c.or_number LIKE :search
-              OR CONCAT(r.first_name,' ',r.last_name) LIKE :search)";
-    $params[':search'] = "%$search%";
-}
-
-$whereSQL = implode(" AND ", $where);
-
-$stmtList = $pdo->prepare("
-    SELECT c.id,
-           c.or_number,
-           c.source_type,
-           c.amount,
-           c.description,
-           c.collected_at,
-           c.voided,
-           COALESCE(CONCAT(r.first_name, ' ', r.last_name), 'Walk-in') AS resident_name,
-           u.username AS collected_by_name
-    FROM collections c
-    LEFT JOIN residents r ON r.id = c.resident_id
-    JOIN users u ON u.id = c.collected_by
-    WHERE $whereSQL
-    ORDER BY c.collected_at DESC
-");
-
-$stmtList->execute($params);
-$collections = $stmtList->fetchAll(PDO::FETCH_ASSOC);
-
-// ── Running total ─────────────────────────────────────────────────────────────
-$stmtTotal = $pdo->prepare("
-    SELECT COALESCE(SUM(c.amount), 0)
-    FROM   collections c
-    LEFT JOIN residents r ON r.id = c.resident_id
-    JOIN   users u        ON u.id = c.collected_by
-    WHERE  DATE(c.collected_at) BETWEEN :date_from AND :date_to
-           $typeClause
-           $searchClause
-");
-$stmtTotal->execute($params);
-$runningTotal = (float) $stmtTotal->fetchColumn();
-
-// ── OR Number generator ───────────────────────────────────────────────────────
-function generate_or_number(PDO $pdo): string {
-    $last = $pdo->query('SELECT MAX(id) AS lid FROM collections')
-                ->fetch(PDO::FETCH_ASSOC)['lid'] ?? 0;
-    return 'OR-' . date('Y') . '-' . str_pad(($last + 1), 5, '0', STR_PAD_LEFT);
-}
-
-// ── Insert new collection ─────────────────────────────────────────────────────
-function insert_collection(PDO $pdo, array $data, int $collected_by): bool {
-    $or_number = generate_or_number($pdo);
-
-    $stmt = $pdo->prepare("
-        INSERT INTO collections 
-            (or_number, request_id, resident_id, source_type, amount, description, collected_by, collected_at)
-        VALUES 
-            (:or_number, :request_id, :resident_id, :source_type, :amount, :description, :collected_by, :collected_at)
-    ");
-
-    return $stmt->execute([
-        ':or_number'    => $or_number,
-        ':request_id'   => $data['request_id']  ?? null,
-        ':resident_id'  => $data['resident_id'] ?? null,
-        ':source_type'  => $data['source_type'],
-        ':amount'       => $data['amount'],
-        ':description'  => $data['description'] ?? '',
-        ':collected_by' => $collected_by,
-        ':collected_at' => $data['collected_at'] ?? date('Y-m-d H:i:s'),
-    ]);
-}
-
-// ── Export URL ────────────────────────────────────────────────────────────────
-$exportUrl = 'finance_admin.php?' . http_build_query([
-    'tab'       => 'collections',
-    'export'    => 'csv',
-    'type'      => $sourceType,
-    'date_from' => $dateFrom,
-    'date_to'   => $dateTo,
-    'search'    => $search,
-]);
-
-// ── Handle Record Payment POST ────────────────────────────────────────────────
-if (
-    $_SERVER['REQUEST_METHOD'] === 'POST' &&
-    ($_POST['_rec_action'] ?? '') === 'record_payment' &&
-    ($_GET['tab'] ?? '') === 'record'
-) {
-    header('Content-Type: application/json');
-
-    $rec_source_type  = trim($_POST['source_type']  ?? '');
-    $rec_resident_id  = !empty($_POST['resident_id']) ? (int)$_POST['resident_id'] : null;
-    $rec_request_id   = !empty($_POST['request_id'])  ? (int)$_POST['request_id']  : null;
-    $rec_amount       = (float)($_POST['amount']      ?? 0);
-    $rec_description  = trim($_POST['description']   ?? '');
-    $rec_collected_at = trim($_POST['collected_at']  ?? date('Y-m-d'));
-    $rec_notes        = trim($_POST['notes']         ?? '');
-
-    // ── Validate ──────────────────────────────────────────────────────────────
-    $errors = [];
-    $allowed_types = ['document_fee','business_permit','cedula','other'];
-
-    if (!in_array($rec_source_type, $allowed_types, true))
-        $errors[] = 'Invalid source type.';
-    if ($rec_amount <= 0)
-        $errors[] = 'Amount must be greater than 0.';
-    if ($rec_description === '')
-        $errors[] = 'Description is required.';
-    if ($rec_collected_at === '')
-        $errors[] = 'Date collected is required.';
-
-    if (!empty($errors)) {
-        echo json_encode(['success' => false, 'message' => implode(' ', $errors)]);
-        exit;
-    }
-
-    // ── Generate OR number (as specified) ─────────────────────────────────────
-    $last  = $pdo->query('SELECT MAX(id) AS lid FROM collections')
-                 ->fetch(PDO::FETCH_ASSOC)['lid'] ?? 0;
-    $or_no = 'OR-' . date('Y') . '-' . str_pad(($last + 1), 5, '0', STR_PAD_LEFT);
-
-    // ── Insert (as specified) ─────────────────────────────────────────────────
-    $stmt = $pdo->prepare("
-        INSERT INTO collections
-            (or_number, request_id, resident_id, source_type, amount, description, collected_by, collected_at)
-        VALUES
-            (?, ?, ?, ?, ?, ?, ?, ?)
-    ");
-
-    $stmt->execute([
-        $or_no,
-        $rec_request_id,
-        $rec_resident_id,
-        $rec_source_type,
-        $rec_amount,
-        $rec_description . ($rec_notes ? ' | Notes: ' . $rec_notes : ''),
-        $currentUser['id'],
-        $rec_collected_at,
-    ]);
-
-    echo json_encode([
-        'success'   => true,
-        'message'   => 'Payment recorded successfully.',
-        'or_number' => $or_no,
-    ]);
-    exit;
-}
-
-// ── Search document requests (AJAX) ──────────────────────────────────────────
-if (
-    isset($_GET['_rec_search_req']) &&
-    ($_GET['tab'] ?? '') === 'record'
-) {
-    header('Content-Type: application/json');
-    $q = '%' . trim($_GET['q'] ?? '') . '%';
-    $rows = $pdo->prepare("
-        SELECT   id, reference_number, document_type,
-                 CONCAT(r.first_name,' ',r.last_name) AS resident_name,
-                 r.id AS resident_id
-        FROM     document_requests dr
-        JOIN     residents r ON r.id = dr.resident_id
-        WHERE    dr.reference_number LIKE :q
-           OR    CONCAT(r.first_name,' ',r.last_name) LIKE :q
-        LIMIT 10
-    ");
-    $rows->execute([':q' => $q]);
-    echo json_encode($rows->fetchAll(PDO::FETCH_ASSOC));
-    exit;
-}
-
-/* Pre-generate OR preview for display */
-$preview_last  = $pdo->query('SELECT MAX(id) AS lid FROM collections')
-                      ->fetch(PDO::FETCH_ASSOC)['lid'] ?? 0;
-$preview_or_no = 'OR-' . date('Y') . '-' . str_pad(($preview_last + 1), 5, '0', STR_PAD_LEFT);
-
-// ─── Configuration ───────────────────────────────────────────────────────────
-define('LARGE_EXPENDITURE_THRESHOLD', 5000);
- 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-function formatAmount(float $amount): string {
-    return '₱' . number_format($amount, 2);
-}
- 
-function getStatusBadge(string $status): string {
-    if ($status === 'Approved') {
-        return '<span class="exp-badge exp-badge--approved">Approved</span>';
-    }
-    return '<span class="exp-badge exp-badge--pending">Pending Captain Approval</span>';
-}
- 
-function getCategoryIcon(string $cat): string {
-    $icons = [
-        'Personnel'      => '👤',
-        'Supplies'       => '📦',
-        'Infrastructure' => '🏗️',
-        'Events'         => '🎉',
-        'Maintenance'    => '🔧',
-        'Other'          => '📁',
-    ];
-    return $icons[$cat] ?? '📁';
-}
- 
-// ─── Filter inputs ────────────────────────────────────────────────────────────
-$categoryFilter = $_GET['category']   ?? 'all';
-$dateFrom = !empty($_GET['date_from'])
-    ? $_GET['date_from'] . " 00:00:00"
-    : date('Y-m-01 00:00:00');
-
-$dateTo = !empty($_GET['date_to'])
-    ? $_GET['date_to'] . " 23:59:59"
-    : date('Y-m-d 23:59:59');
-$searchQuery    = $_GET['search']     ?? '';
- 
-$validCategories = ['all', 'Personnel', 'Supplies', 'Infrastructure', 'Events', 'Maintenance', 'Other'];
-if (!in_array($categoryFilter, $validCategories, true)) {
-    $categoryFilter = 'all';
-}
- 
-$expenditures = [];
-$subtotals    = [];
-$totalAmount  = 0;
- 
-if (isset($pdo)) {   // $pdo = your PDO connection
-    if ($categoryFilter === 'all') {
-        $sql  = "SELECT e.id, e.category, e.description, e.amount,
-                        e.disbursement_date, e.payee, e.supporting_doc_path,
-                        u_rec.username AS recorded_by_name,
-                        u_apr.username AS approved_by_name,
-                        CASE WHEN e.approved_by IS NOT NULL THEN 'Approved'
-                             ELSE 'Pending Approval' END AS approval_status
-                 FROM expenditures e
-                 JOIN users u_rec ON u_rec.id = e.recorded_by
-                 LEFT JOIN users u_apr ON u_apr.id = e.approved_by
-                 WHERE e.disbursement_date BETWEEN ? AND ?
-                 ORDER BY e.disbursement_date DESC";
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([$dateFrom, $dateTo]);
-    } else {
-        $sql  = "SELECT e.id, e.category, e.description, e.amount,
-                        e.disbursement_date, e.payee, e.supporting_doc_path,
-                        u_rec.username AS recorded_by_name,
-                        u_apr.username AS approved_by_name,
-                        CASE WHEN e.approved_by IS NOT NULL THEN 'Approved'
-                             ELSE 'Pending Approval' END AS approval_status
-                 FROM expenditures e
-                 JOIN users u_rec ON u_rec.id = e.recorded_by
-                 LEFT JOIN users u_apr ON u_apr.id = e.approved_by
-                 WHERE e.category = ? AND e.disbursement_date BETWEEN ? AND ?
-                 ORDER BY e.disbursement_date DESC";
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([$categoryFilter, $dateFrom, $dateTo]);
-    }
-    $expenditures = $stmt->fetchAll(PDO::FETCH_ASSOC);
-}
- 
-// Apply search filter (PHP-side on description/payee)
-if ($searchQuery !== '') {
-    $q = strtolower($searchQuery);
-    $expenditures = array_filter($expenditures, function($row) use ($q) {
-        return str_contains(strtolower($row['description']), $q)
-            || str_contains(strtolower($row['payee']), $q);
-    });
-    $expenditures = array_values($expenditures);
-}
- 
-// Compute subtotals
-foreach ($expenditures as $row) {
-    $cat = $row['category'];
-    $subtotals[$cat] = ($subtotals[$cat] ?? 0) + $row['amount'];
-    $totalAmount += $row['amount'];
-}
-
-// ── Config ──────────────────────────────────────────────────────────────
-$APPROVAL_THRESHOLD = 5000;          // configurable
-$UPLOAD_DIR         = 'uploads/expenditures/';
-$MAX_FILE_SIZE      = 5 * 1024 * 1024; // 5 MB
-
-$errors  = [];
-$success = false;
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-
-    // ── Sanitise & validate inputs ──────────────────────────────────────
-    $category          = trim($_POST['category']          ?? '');
-    $description       = trim($_POST['description']       ?? '');
-    $amount            = $_POST['amount']                 ?? '';
-    $disbursement_date = trim($_POST['disbursement_date'] ?? '');
-    $payee             = trim($_POST['payee']             ?? '');
-    $notes             = trim($_POST['notes']             ?? '');
-    $recorded_by       = $_SESSION['user_id']             ?? null;
-
-    $allowed_categories = ['Personnel','Supplies','Infrastructure','Events','Maintenance','Other'];
-
-    if (!in_array($category, $allowed_categories))           $errors[] = 'Invalid category selected.';
-    if ($description === '')                                  $errors[] = 'Description is required.';
-    if (!is_numeric($amount) || (float)$amount <= 0)         $errors[] = 'Amount must be a number greater than 0.';
-    if (!$disbursement_date || !strtotime($disbursement_date)) $errors[] = 'Invalid disbursement date.';
-    if ($payee === '')                                        $errors[] = 'Payee is required.';
-
-    $amount = (float)$amount;
-
-    // ── File upload ─────────────────────────────────────────────────────
-    $supporting_doc_path = null;
-
-    if (!empty($_FILES['supporting_doc']['name'])) {
-        $file      = $_FILES['supporting_doc'];
-        $allowed   = ['image/jpeg','image/png','application/pdf'];
-        $ext_map   = ['image/jpeg'=>'jpg','image/png'=>'png','application/pdf'=>'pdf'];
-        $mime      = mime_content_type($file['tmp_name']);
-
-        if (!in_array($mime, $allowed)) {
-            $errors[] = 'Supporting document must be JPG, PNG, or PDF.';
-        } elseif ($file['size'] > $MAX_FILE_SIZE) {
-            $errors[] = 'Supporting document must not exceed 5 MB.';
-        } else {
-            if (!is_dir($UPLOAD_DIR)) mkdir($UPLOAD_DIR, 0755, true);
-            $filename            = uniqid('doc_', true) . '.' . $ext_map[$mime];
-            $supporting_doc_path = $UPLOAD_DIR . $filename;
-            if (!move_uploaded_file($file['tmp_name'], $supporting_doc_path)) {
-                $errors[] = 'File upload failed. Please try again.';
-                $supporting_doc_path = null;
-            }
-        }
-    }
-
-    // ── Persist to DB ───────────────────────────────────────────────────
-    if (empty($errors)) {
-        // approved_by left NULL until Captain approves
-        $sql = "INSERT INTO expenditures
-                    (category, description, amount, disbursement_date, payee, supporting_doc_path, recorded_by)
-                VALUES (?,?,?,?,?,?,?)";
-
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([
-            $category,
-            $description,
-            $amount,
-            $disbursement_date,
-            $payee,
-            $supporting_doc_path,
-            $recorded_by
-        ]);
-
-        // ── Approval threshold rule ─────────────────────────────────────
-        $new_id = $pdo->lastInsertId();
-        if ($amount < $APPROVAL_THRESHOLD) {
-            $pdo->prepare("UPDATE expenditures SET approval_status='Approved', approved_by=? WHERE id=?")
-                ->execute([$recorded_by, $new_id]);
-            $toast_msg  = 'Expenditure recorded and auto-approved.';
-            $toast_type = 'success';
-        } else {
-            $pdo->prepare("UPDATE expenditures SET approval_status='Pending Captain Approval' WHERE id=?")
-                ->execute([$new_id]);
-            $toast_msg  = 'Expenditure submitted — pending Captain approval.';
-            $toast_type = 'pending';
-        }
-
-        $success = true;
-    }
-}
-
-// ── Default date = today ────────────────────────────────────────────────
-$default_date = date('Y-m-d');
-
-/* ── Fiscal year ─────────────────────────────────────────────────── */
-$fiscal_year = isset($_GET['fy']) ? (int)$_GET['fy'] : (int)date('Y');
-$min_year    = 2020;
-$max_year    = (int)date('Y') + 1;
- 
-/* ── AJAX / POST actions ─────────────────────────────────────────── */
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['_bud_action'])) {
-    header('Content-Type: application/json');
- 
-    $action = $_POST['_bud_action'];
- 
-    /* ── Add budget item ─────────────────────────────────────────── */
-    if ($action === 'add') {
-      error_log("POST DATA: " . json_encode($_POST));
-        $category         = trim($_POST['category']         ?? '');
-        $description      = trim($_POST['description']      ?? '');
-        $allocated_amount = (float)($_POST['allocated_amount'] ?? 0);
-        if (!isset($_POST['fiscal_year']) || !is_numeric($_POST['fiscal_year'])) {
-            echo json_encode(['success'=>false,'message'=>'Invalid fiscal year.']);
-            exit;
-        }
-
-        $fy = (int) $_POST['fiscal_year'];
- 
-        $allowed = ['Personnel','Supplies','Infrastructure','Events','Maintenance','Other'];
-        if (!in_array($category, $allowed))          { echo json_encode(['success'=>false,'message'=>'Invalid category.']); exit; }
-        if ($allocated_amount <= 0)                   { echo json_encode(['success'=>false,'message'=>'Amount must be greater than 0.']); exit; }
- 
-        // Prevent duplicate category in same fiscal year
-        $chk = $pdo->prepare("SELECT id FROM budget_items WHERE category=? AND fiscal_year=?");
-        $chk->execute([$category, $fy]);
-        if ($chk->fetch()) { echo json_encode(['success'=>false,'message'=>'This category already has a budget line for '.$fy.'.']); exit; }
- 
-        $created_by = (int)$_SESSION['user_id'];
-
-        $stmt = $pdo->prepare("
-            INSERT INTO budget_items
-            (
-                category,
-                description,
-                allocated_amount,
-                fiscal_year,
-                created_by
-            )
-            VALUES (?, ?, ?, ?, ?)
-        ");
-
-        $stmt->execute([
-            $category,
-            $description,
-            $allocated_amount,
-            $fy,
-            $created_by
-        ]);
-        echo json_encode(['success'=>true,'message'=>'Budget item added.','id'=>$pdo->lastInsertId()]);
-        exit;
-    }
- 
-    /* ── Edit budget item ────────────────────────────────────────── */
-    if ($action === 'edit') {
-        $id               = (int)($_POST['id']               ?? 0);
-        $allocated_amount = (float)($_POST['allocated_amount'] ?? 0);
-        $description      = trim($_POST['description']       ?? '');
- 
-        if ($id <= 0)             { echo json_encode(['success'=>false,'message'=>'Invalid item.']); exit; }
-        if ($allocated_amount <= 0){ echo json_encode(['success'=>false,'message'=>'Amount must be greater than 0.']); exit; }
- 
-        $stmt = $pdo->prepare("UPDATE budget_items SET allocated_amount=?, description=? WHERE id=?");
-        $stmt->execute([$allocated_amount, $description, $id]);
-        echo json_encode(['success'=>true,'message'=>'Budget item updated.']);
-        exit;
-    }
- 
-    /* ── Delete budget item ──────────────────────────────────────── */
-    if ($action === 'delete') {
-        $id = (int)($_POST['id'] ?? 0);
-        if ($id <= 0) { echo json_encode(['success'=>false,'message'=>'Invalid item.']); exit; }
- 
-        // Only delete if no expenditures are linked
-        $row   = $pdo->prepare("SELECT category, fiscal_year FROM budget_items WHERE id=?");
-        $row->execute([$id]);
-        $item  = $row->fetch(PDO::FETCH_ASSOC);
-        if (!$item) { echo json_encode(['success'=>false,'message'=>'Item not found.']); exit; }
- 
-        $spent = $pdo->prepare("SELECT COUNT(*) FROM expenditures WHERE category=? AND YEAR(disbursement_date)=?");
-        $spent->execute([$item['category'], $item['fiscal_year']]);
-        if ($spent->fetchColumn() > 0) {
-            echo json_encode(['success'=>false,'message'=>'Cannot delete: expenditures are linked to this budget line.']);
-            exit;
-        }
- 
-        $pdo->prepare("DELETE FROM budget_items WHERE id=?")->execute([$id]);
-        echo json_encode(['success'=>true,'message'=>'Budget item deleted.']);
-        exit;
-    }
- 
-    echo json_encode(['success'=>false,'message'=>'Unknown action.']);
-    exit;
-}
- 
-/* ── Budget items with spent amounts ────────────────────────────── */
-$items_stmt = $pdo->prepare("
-    SELECT b.id, b.category, b.description, b.allocated_amount,
-           COALESCE(SUM(e.amount), 0) AS spent,
-           b.allocated_amount - COALESCE(SUM(e.amount), 0) AS remaining,
-           ROUND(COALESCE(SUM(e.amount),0) / b.allocated_amount * 100, 1) AS pct_used
-    FROM budget_items b
-    LEFT JOIN expenditures e
-           ON e.category = b.category
-          AND YEAR(e.disbursement_date) = b.fiscal_year
-    WHERE b.fiscal_year = ?
-    GROUP BY b.id
-    ORDER BY b.category
-");
-$items_stmt->execute([$fiscal_year]);
-$budget_items = $items_stmt->fetchAll(PDO::FETCH_ASSOC);
- 
-/* Total budget vs total spent */
-$stmt = $pdo->prepare("
-    SELECT COALESCE(SUM(allocated_amount),0)
-    FROM budget_items
-    WHERE fiscal_year = ?
-");
-$stmt->execute([$fiscal_year]);
-$total_budget = (float)$stmt->fetchColumn();
-
-$stmt = $pdo->prepare("
-    SELECT COALESCE(SUM(amount),0)
-    FROM expenditures
-    WHERE YEAR(disbursement_date) = ?
-    AND approval_status = 'approved'
-");
-$stmt->execute([$fiscal_year]);
-$total_spent = (float)$stmt->fetchColumn();
- 
-$total_budget    = (float)($totals['total_budget'] ?? 0);
-$total_spent     = (float)($totals['total_spent']  ?? 0);
-$total_remaining = $total_budget - $total_spent;
-$total_pct       = $total_budget > 0 ? round($total_spent / $total_budget * 100, 1) : 0;
- 
-$categories = ['Personnel','Supplies','Infrastructure','Events','Maintenance','Other'];
-
-$office_address = 'Brgy. Sta. Rosa 1, Noveleta, Cavite';
-$contact_number = '+63 912 000 0000';
-$barangay_hotline = 'Emergency Hotline 911';
-$emergency_numbers = 'PNP 166, Fire 1555, NDRRMC 825-0000';
-
-// Static placeholder values
-$profile_percent       = 80;
-$sidebar_missing_summary = 'Complete your profile';
-$unread_count          = 3;
-$notifications         = [
-    ['is_read' => 0, 'link' => '#', 'title' => 'Budget Approved', 'message' => 'Q2 budget has been approved.', 'created_at' => '2025-05-24 09:00:00'],
-    ['is_read' => 1, 'link' => '#', 'title' => 'New Payment Recorded', 'message' => 'Business permit fee collected.', 'created_at' => '2025-05-23 14:30:00'],
-];
-$initials              = 'MT';
-$first_name            = 'Maria';
-$display_name          = 'Maria Torres';
-$user                  = ['email' => 'maria.torres@brgy-starosa1.gov.ph'];
-$today_line            = date('l, F j, Y');
-$greeting              = 'Good morning';
-$pending_count         = '₱ 48,250';
-$ready_count           = '₱ 12,800';
-$total_count           = '64%';
-$document_processing_times = [];
-
-// Role & fiscal year
-$role_label            = 'Barangay Treasurer';
-$fiscal_year_label = 'Fiscal Year ' . $fiscal_year;
-
-function e($val) { return htmlspecialchars((string)$val, ENT_QUOTES, 'UTF-8'); }
-function rd_date($val) { return date('M j, Y g:i A', strtotime($val)); }
-
-$monthlyCollections = array_fill(0, 12, 0);
-$monthlyExpenditures = array_fill(0, 12, 0);
-
-/* Collections */
-$stmt = $pdo->query("
-    SELECT
-        MONTH(collected_at) AS month_num,
-        SUM(amount) AS total
-    FROM collections
-    WHERE YEAR(collected_at) = YEAR(CURDATE())
-    GROUP BY MONTH(collected_at)
-");
-
-while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-    $monthlyCollections[$row['month_num'] - 1] = (float)$row['total'];
-}
-
-/* Collection Today */
-$stmt = $pdo->query("
-    SELECT COALESCE(SUM(amount),0)
-    FROM collections
-    WHERE DATE(collected_at) = CURDATE()
-");
-
-$today_collections = (float)$stmt->fetchColumn();
-
-/* Collection Per Month */
-$stmt = $pdo->query("
-    SELECT COALESCE(SUM(amount),0)
-    FROM collections
-    WHERE YEAR(collected_at) = YEAR(CURDATE())
-      AND MONTH(collected_at) = MONTH(CURDATE())
-");
-
-$month_collections = (float)$stmt->fetchColumn();
-
-/* Collection Last Month */
-$stmt = $pdo->query("
-    SELECT COALESCE(SUM(amount),0)
-    FROM collections
-    WHERE YEAR(collected_at) = YEAR(DATE_SUB(CURDATE(), INTERVAL 1 MONTH))
-      AND MONTH(collected_at) = MONTH(DATE_SUB(CURDATE(), INTERVAL 1 MONTH))
-");
-
-$last_month_collections = (float)$stmt->fetchColumn();
-
-if ($last_month_collections > 0) {
-    $mom_change =
-        (($month_collections - $last_month_collections)
-        / $last_month_collections) * 100;
-} else {
-    $mom_change = 0;
-}
-
-$mom_positive = $mom_change >= 0;
-
-/* Expenditures */
-$stmt = $pdo->query("
-    SELECT
-        MONTH(disbursement_date) AS month_num,
-        SUM(amount) AS total
-    FROM expenditures
-    WHERE YEAR(disbursement_date) = YEAR(CURDATE())
-    GROUP BY MONTH(disbursement_date)
-");
-
-while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-    $monthlyExpenditures[$row['month_num'] - 1] = (float)$row['total'];
-}
-
-/* Expenditures this month */
-$stmt = $pdo->query("
-    SELECT COALESCE(SUM(amount),0)
-    FROM expenditures
-    WHERE YEAR(disbursement_date) = YEAR(CURDATE())
-      AND MONTH(disbursement_date) = MONTH(CURDATE())
-");
-
-$month_expenditures = (float)$stmt->fetchColumn();
-
-$chartLabels = [
-    'Jan','Feb','Mar','Apr','May','Jun',
-    'Jul','Aug','Sep','Oct','Nov','Dec'
-];
-
-$net_balance = $month_collections - $month_expenditures;
-
-$net_class = $net_balance >= 0
-    ? 'text-success'
-    : 'text-danger';
-
-/* Total Budget Allocation */
-$stmt = $pdo->query("
-    SELECT COALESCE(SUM(allocated_amount), 0)
-    FROM budget_items
-    WHERE fiscal_year = YEAR(CURDATE())
-");
-
-$total_budget = (float)$stmt->fetchColumn();
-
-/* Expenditures this year */
-$stmt = $pdo->query("
-    SELECT COALESCE(SUM(amount), 0)
-    FROM expenditures
-    WHERE YEAR(disbursement_date) = YEAR(CURDATE())
-");
-
-$year_expenditures = (float)$stmt->fetchColumn();
-
-/* Pending Expenditures */
-$stmt = $pdo->prepare("
-    SELECT *
-    FROM expenditures
-    WHERE approval_status = 'pending'
-    ORDER BY created_at DESC
-");
-$stmt->execute();
-
-$pending_expenditures = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-/* Budget Utilization % */
-$budget_utilization = 0;
-
-if ($total_budget > 0) {
-    $budget_utilization = ($year_expenditures / $total_budget) * 100;
-}
-
-if ($budget_utilization < 50) {
-    $util_color = 'success';
-} elseif ($budget_utilization < 80) {
-    $util_color = 'warning';
-} else {
-    $util_color = 'danger';
-}
-
-$expenditure_threshold = 50000;
-
-$exp_class = ($month_expenditures >= $expenditure_threshold)
-    ? 'text-danger fw-bold'
-    : 'text-dark';
-
-$net_class = ($net_balance >= 0)
-    ? 'text-success fw-bold'
-    : 'text-danger fw-bold';
-
-$util_color = ($budget_utilization >= 90)
-    ? 'danger'
-    : (($budget_utilization >= 70) ? 'warning' : 'success');
-
-// Color logic
-$exp_class    = ($month_expenditures >= $expenditure_threshold) ? 'text-danger fw-bold' : 'text-dark';
-$net_class    = ($net_balance >= 0) ? 'text-success fw-bold' : 'text-danger fw-bold';
-$util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >= 70) ? 'warning' : 'success');
-
-/* REPORTS PHP */
-if ($tab === 'reports' && isset($_GET['export'])) {
-
-  $month  = (int)($_GET['month'] ?? 0);
-  $year   = (int)($_GET['year'] ?? 0);
-  $export = $_GET['export'] ?? 'preview';
-
-  if ($month < 1 || $month > 12 || $year < 2000 || $year > 2100) {
-      http_response_code(400);
-      echo json_encode(['error' => 'Invalid or missing month/year parameters.']);
+  require_once __DIR__ . '/includes/admin_layout.php';
+
+  include '../config/connection.php';
+  include '../includes/auth_check.php';
+
+  if (!isset($_SESSION['user_id'])) {
+      header("Location: ../login.php");
+      exit();
+  }
+
+  $isRecordAjax = $_SERVER['REQUEST_METHOD'] === 'POST'
+      && ($_POST['_rec_action'] ?? '') === 'record_payment';
+
+  if (!$isRecordAjax) {
+      require_once __DIR__ . '/includes/admin_layout.php';
+  }
+
+  requireRole(['treasurer']);
+
+
+  $tab = $_GET['tab'] ?? 'dashboard';
+
+  $current_user = [
+      'id'       => $_SESSION['user_id'],
+      'email'    => $_SESSION['email'],
+      'role'     => $_SESSION['role'],
+      'fullname' => 'Treasurer',
+      'username' => $_SESSION['email']
+  ];
+
+  adm_page_start(
+      'Finance Management',
+      $tab,
+      $current_user
+  );
+
+  /* Collections */
+  if (!function_exists('col_sanitize')) {
+      function col_sanitize(string $v): string {
+          return htmlspecialchars(trim($v), ENT_QUOTES, 'UTF-8');
+      }
+  }
+  if (!function_exists('col_currency')) {
+      function col_currency(float $n): string {
+          return '₱ ' . number_format($n, 2);
+      }
+  }
+  if (!function_exists('col_type_label')) {
+      function col_type_label(string $t): string {
+          return match($t) {
+              'document_fee'    => 'Document Fee',
+              'business_permit' => 'Business Permit',
+              'cedula'          => 'Cedula',
+              default           => 'Other',
+          };
+      }
+  }
+  if (!function_exists('col_type_badge')) {
+      function col_type_badge(string $t): string {
+          return match($t) {
+              'document_fee'    => 'cbadge-doc',
+              'business_permit' => 'cbadge-biz',
+              'cedula'          => 'cbadge-ced',
+              default           => 'cbadge-other',
+          };
+      }
+  }
+
+  // ── Handle AJAX void POST (returns JSON and exits) ───────────────────────────
+  if (
+      $_SERVER['REQUEST_METHOD'] === 'POST' &&
+      ($_POST['_col_action'] ?? '') === 'void' &&
+      ($_GET['tab'] ?? '') === 'collections'
+  ) {
+      header('Content-Type: application/json');
+      if (!in_array($currentUser['role'], ['treasurer', 'admin'], true)) {
+          echo json_encode(['success' => false, 'message' => 'Unauthorized.']);
+          exit;
+      }
+      $vid    = (int) ($_POST['id']     ?? 0);
+      $reason = trim($_POST['reason']  ?? '');
+      if (!$vid || $reason === '') {
+          echo json_encode(['success' => false, 'message' => 'ID and reason are required.']);
+          exit;
+      }
+      $s = $pdo->prepare("
+          UPDATE collections
+          SET    voided = 1, void_reason = :reason,
+                voided_by = :by, voided_at = NOW()
+          WHERE  id = :id AND voided = 0
+      ");
+      $s->execute([':reason' => $reason, ':by' => $currentUser['id'], ':id' => $vid]);
+      echo json_encode($s->rowCount()
+          ? ['success' => true,  'message' => 'Collection voided successfully.']
+          : ['success' => false, 'message' => 'Record not found or already voided.']
+      );
       exit;
   }
 
-  // ALL report logic here\
-  $fpdfPath = __DIR__ . '/vendor/fpdf/fpdf.php';
+  // ── Handle CSV export (streams file and exits) ────────────────────────────────
+  if (($_GET['tab'] ?? '') === 'collections' && ($_GET['export'] ?? '') === 'csv') {
+      $allowed = ['all','document_fee','business_permit','cedula','other'];
+      $xType   = in_array($_GET['type'] ?? 'all', $allowed, true) ? ($_GET['type'] ?? 'all') : 'all';
+      $xFrom   = !empty($_GET['date_from']) ? date('Y-m-d', strtotime($_GET['date_from'])) : date('Y-m-01');
+      $xTo     = !empty($_GET['date_to'])   ? date('Y-m-d', strtotime($_GET['date_to']))   : date('Y-m-d');
+      $xSearch = trim($_GET['search'] ?? '');
 
-  // ── Input validation ─────────────────────────────────────────
-  $month  = filter_input(INPUT_GET, 'month',  FILTER_VALIDATE_INT, ['options' => ['min_range' => 1,    'max_range' => 12]]);
-  $year   = filter_input(INPUT_GET, 'year',   FILTER_VALIDATE_INT, ['options' => ['min_range' => 2000, 'max_range' => 2100]]);
-  $export = trim(filter_input(INPUT_GET, 'export', FILTER_SANITIZE_SPECIAL_CHARS) ?? 'preview');
-
-  if (!$month || !$year) {
-    http_response_code(400);
-    echo json_encode(['error' => 'Invalid or missing month/year parameters.']);
-    exit;
-  }
-
-  if (!in_array($export, ['preview', 'pdf', 'csv'], true)) {
-    $export = 'preview';
-  }
-
-  // ── Helpers ──────────────────────────────────────────────────
-  function monthName(int $m): string {
-    return date('F', mktime(0, 0, 0, $m, 1));
-  }
-  
-  function peso(float $v): string {
-    return '₱ ' . number_format(abs($v), 2);
-  }
-  
-  function pesoSigned(float $v): string {
-    $fmt = '₱ ' . number_format(abs($v), 2);
-    return $v < 0 ? '(' . $fmt . ')' : $fmt;
-  }
-
-  // ── Query 1: Collections + Expenditures breakdown (UNION ALL) ─
-  /**
-   * Exact SQL preserved from spec.
-   * Binds: month, year (collections), month, year (expenditures)
-   */
-  $sqlBreakdown = "
-      SELECT
-          source_type,
-          COUNT(*)       AS transaction_count,
-          SUM(amount)    AS total_amount
-      FROM collections
-      WHERE MONTH(collected_at)  = ? AND YEAR(collected_at)  = ?
-      GROUP BY source_type
-  
-      UNION ALL
-  
-      SELECT
-          CONCAT('EXP: ', category) AS source_type,
-          COUNT(*)                  AS transaction_count,
-          SUM(amount)               AS total_amount
-      FROM expenditures
-      WHERE MONTH(disbursement_date) = ? AND YEAR(disbursement_date) = ?
-      GROUP BY category
-  ";
-  
-  $stmtBreakdown = $pdo->prepare($sqlBreakdown);
-  $stmtBreakdown->execute([$month, $year, $month, $year]);
-  $breakdown = $stmtBreakdown->fetchAll(PDO::FETCH_ASSOC);
-
-  // ── Query 2: Net balance ──────────────────────────────────────
-  /**
-   * Exact SQL preserved from spec.
-   * Binds: month, year (collections), month, year (expenditures)
-   */
-  $sqlNet = "
-      SELECT
-          COALESCE(SUM(c.amount), 0) - COALESCE(SUM(e.amount), 0) AS net_balance
-      FROM (SELECT 1) d
-      LEFT JOIN collections  c ON MONTH(c.collected_at)       = ? AND YEAR(c.collected_at)       = ?
-      LEFT JOIN expenditures e ON MONTH(e.disbursement_date)  = ? AND YEAR(e.disbursement_date)  = ?
-  ";
-  
-  $stmtNet = $pdo->prepare($sqlNet);
-  $stmtNet->execute([$month, $year, $month, $year]);
-  $netRow = $stmtNet->fetch(PDO::FETCH_ASSOC);
-  $netBalance = (float)($netRow['net_balance'] ?? 0);
-
-  // ── Derived totals from breakdown ────────────────────────────
-  $totalCollections  = 0.0;
-  $totalExpenditures = 0.0;
-  $collections       = [];
-  $expenditures      = [];
-  
-  foreach ($breakdown as $row) {
-      $amount = (float)$row['total_amount'];
-      if (str_starts_with($row['source_type'], 'EXP: ')) {
-          $totalExpenditures += $amount;
-          $expenditures[] = [
-              'label' => substr($row['source_type'], 5), // strip 'EXP: '
-              'count' => (int)$row['transaction_count'],
-              'amount' => $amount,
-          ];
-      } else {
-          $totalCollections += $amount;
-          $collections[] = [
-              'label' => $row['source_type'],
-              'count' => (int)$row['transaction_count'],
-              'amount' => $amount,
-          ];
+      $xParams = [':date_from' => $xFrom, ':date_to' => $xTo];
+      $xType_q = $xType !== 'all' ? 'AND c.source_type = :source_type' : '';
+      if ($xType !== 'all') $xParams[':source_type'] = $xType;
+      $xSearch_q = '';
+      if ($xSearch !== '') {
+          $xSearch_q = "AND (c.or_number LIKE :search OR CONCAT(r.first_name,' ',r.last_name) LIKE :search)";
+          $xParams[':search'] = '%' . $xSearch . '%';
       }
-  }
-  
-  $periodLabel   = monthName($month) . ' ' . $year;
-  $generatedDate = date('F j, Y');
-  $preparedBy    = 'Barangay Treasurer'; // adjust to session value if needed
 
-  // ════════════════════════════════════════════════════════════════
-  // EXPORT: CSV
-  // ════════════════════════════════════════════════════════════════
-  if ($export === 'csv') {
-      header('Content-Type: text/csv; charset=UTF-8');
-      header('Content-Disposition: attachment; filename="financial_summary_' . $year . '_' . str_pad((string)$month, 2, '0', STR_PAD_LEFT) . '.csv"');
-      header('Cache-Control: no-cache, no-store');
-  
+      $xs = $pdo->prepare("
+          SELECT c.or_number,
+                c.source_type,
+                CONCAT(COALESCE(r.first_name,''),' ',COALESCE(r.last_name,'')) AS resident,
+                c.amount, c.description, c.collected_at,
+                u.username AS collected_by,
+                IF(c.voided,'VOIDED','Active') AS status,
+                c.void_reason
+          FROM   collections c
+          LEFT JOIN residents r ON r.id = c.resident_id
+          JOIN   users u        ON u.id = c.collected_by
+          WHERE  DATE(c.collected_at) BETWEEN :date_from AND :date_to
+                $xType_q $xSearch_q
+          ORDER  BY c.collected_at DESC
+      ");
+      $xs->execute($xParams);
+
+      header('Content-Type: text/csv');
+      header('Content-Disposition: attachment; filename="collections_' . $xFrom . '_to_' . $xTo . '.csv"');
+      header('Pragma: no-cache');
       $out = fopen('php://output', 'w');
-  
-      // BOM for Excel UTF-8 compatibility
-      fputs($out, "\xEF\xBB\xBF");
-  
-      fputcsv($out, ['MONTHLY FINANCIAL SUMMARY']);
-      fputcsv($out, ['Period', $periodLabel]);
-      fputcsv($out, ['Date Generated', $generatedDate]);
-      fputcsv($out, ['Prepared By', $preparedBy]);
-      fputcsv($out, []);
-  
-      fputcsv($out, ['--- COLLECTIONS ---']);
-      fputcsv($out, ['Source Type', 'Transactions', 'Amount']);
-      foreach ($collections as $r) {
-          fputcsv($out, [$r['label'], $r['count'], number_format($r['amount'], 2, '.', '')]);
+      fputcsv($out, ['OR Number','Source Type','Resident','Amount','Description',
+                    'Date Collected','Collected By','Status','Void Reason']);
+      foreach ($xs->fetchAll(PDO::FETCH_ASSOC) as $xr) {
+          $xr['amount'] = number_format((float)$xr['amount'], 2, '.', '');
+          fputcsv($out, $xr);
       }
-      fputcsv($out, ['TOTAL COLLECTIONS', array_sum(array_column($collections, 'count')), number_format($totalCollections, 2, '.', '')]);
-      fputcsv($out, []);
-  
-      fputcsv($out, ['--- EXPENDITURES ---']);
-      fputcsv($out, ['Category', 'Transactions', 'Amount']);
-      foreach ($expenditures as $r) {
-          fputcsv($out, [$r['label'], $r['count'], number_format($r['amount'], 2, '.', '')]);
-      }
-      fputcsv($out, ['TOTAL EXPENDITURES', array_sum(array_column($expenditures, 'count')), number_format($totalExpenditures, 2, '.', '')]);
-      fputcsv($out, []);
-  
-      $netLabel = $netBalance >= 0 ? 'NET SURPLUS' : 'NET DEFICIT';
-      fputcsv($out, [$netLabel, '', number_format(abs($netBalance), 2, '.', '')]);
-  
       fclose($out);
       exit;
   }
+
+  $typeClause = '';
+  $searchClause = '';
+
+  /* Filters */
+  $allowed    = ['all','document_fee','business_permit','cedula','other'];
+  $sourceType = in_array($_GET['type'] ?? 'all', $allowed, true) ? ($_GET['type'] ?? 'all') : 'all';
+  $dateFrom = !empty($_GET['date_from'])
+      ? $_GET['date_from'] . " 00:00:00"
+      : date('Y-m-01 00:00:00');
+
+  $dateTo = !empty($_GET['date_to'])
+      ? $_GET['date_to'] . " 23:59:59"
+      : date('Y-m-d 23:59:59');
+  $search     = trim($_GET['search'] ?? '');
+
+  if ($sourceType !== 'all') {
+      $typeClause = 'AND c.source_type = :source_type';
+      $params[':source_type'] = $sourceType;
+  }
+  if ($search !== '') {
+      $searchClause = "AND (c.or_number LIKE :search OR CONCAT(r.first_name,' ',r.last_name) LIKE :search)";
+      $params[':search'] = '%' . $search . '%';
+  }
+
+  $collections = [];
+
+  $where = [];
+  $params = [];
+
+  $where[] = "c.collected_at BETWEEN :date_from AND :date_to";
+  $params[':date_from'] = $dateFrom;
+  $params[':date_to']   = $dateTo;
+
+  if ($sourceType !== 'all') {
+      $where[] = "c.source_type = :source_type";
+      $params[':source_type'] = $sourceType;
+  }
+
+  if ($search !== '') {
+      $where[] = "(c.or_number LIKE :search
+                OR CONCAT(r.first_name,' ',r.last_name) LIKE :search)";
+      $params[':search'] = "%$search%";
+  }
+
+  $whereSQL = implode(" AND ", $where);
+
+  $stmtList = $pdo->prepare("
+      SELECT c.id,
+            c.or_number,
+            c.source_type,
+            c.amount,
+            c.description,
+            c.collected_at,
+            c.voided,
+            COALESCE(CONCAT(r.first_name, ' ', r.last_name), 'Walk-in') AS resident_name,
+            u.username AS collected_by_name
+      FROM collections c
+      LEFT JOIN residents r ON r.id = c.resident_id
+      JOIN users u ON u.id = c.collected_by
+      WHERE $whereSQL
+      ORDER BY c.collected_at DESC
+  ");
+
+  $stmtList->execute($params);
+  $collections = $stmtList->fetchAll(PDO::FETCH_ASSOC);
+
+  // ── Running total ─────────────────────────────────────────────────────────────
+  $stmtTotal = $pdo->prepare("
+      SELECT COALESCE(SUM(c.amount), 0)
+      FROM   collections c
+      LEFT JOIN residents r ON r.id = c.resident_id
+      JOIN   users u        ON u.id = c.collected_by
+      WHERE  DATE(c.collected_at) BETWEEN :date_from AND :date_to
+            $typeClause
+            $searchClause
+  ");
+  $stmtTotal->execute($params);
+  $runningTotal = (float) $stmtTotal->fetchColumn();
+
+  // ── OR Number generator ───────────────────────────────────────────────────────
+  function generate_or_number(PDO $pdo): string {
+      $last = $pdo->query('SELECT MAX(id) AS lid FROM collections')
+                  ->fetch(PDO::FETCH_ASSOC)['lid'] ?? 0;
+      return 'OR-' . date('Y') . '-' . str_pad(($last + 1), 5, '0', STR_PAD_LEFT);
+  }
+
+  // ── Insert new collection ─────────────────────────────────────────────────────
+  function insert_collection(PDO $pdo, array $data, int $collected_by): bool {
+      $or_number = generate_or_number($pdo);
+
+      $stmt = $pdo->prepare("
+          INSERT INTO collections 
+              (or_number, request_id, resident_id, source_type, amount, description, collected_by, collected_at)
+          VALUES 
+              (:or_number, :request_id, :resident_id, :source_type, :amount, :description, :collected_by, :collected_at)
+      ");
+
+      return $stmt->execute([
+          ':or_number'    => $or_number,
+          ':request_id'   => $data['request_id']  ?? null,
+          ':resident_id'  => $data['resident_id'] ?? null,
+          ':source_type'  => $data['source_type'],
+          ':amount'       => $data['amount'],
+          ':description'  => $data['description'] ?? '',
+          ':collected_by' => $collected_by,
+          ':collected_at' => $data['collected_at'] ?? date('Y-m-d H:i:s'),
+      ]);
+  }
+
+  // ── Export URL ────────────────────────────────────────────────────────────────
+  $exportUrl = 'finance_admin.php?' . http_build_query([
+      'tab'       => 'collections',
+      'export'    => 'csv',
+      'type'      => $sourceType,
+      'date_from' => $dateFrom,
+      'date_to'   => $dateTo,
+      'search'    => $search,
+  ]);
+
+  // ── Handle Record Payment POST ────────────────────────────────────────────────
+  if (
+      $_SERVER['REQUEST_METHOD'] === 'POST' &&
+      ($_POST['_rec_action'] ?? '') === 'record_payment' &&
+      ($_GET['tab'] ?? '') === 'record'
+  ) {
+      header('Content-Type: application/json');
+
+      $rec_source_type  = trim($_POST['source_type']  ?? '');
+      $rec_resident_id  = !empty($_POST['resident_id']) ? (int)$_POST['resident_id'] : null;
+      $rec_request_id   = !empty($_POST['request_id'])  ? (int)$_POST['request_id']  : null;
+      $rec_amount       = (float)($_POST['amount']      ?? 0);
+      $rec_description  = trim($_POST['description']   ?? '');
+      $rec_collected_at = trim($_POST['collected_at']  ?? date('Y-m-d'));
+      $rec_notes        = trim($_POST['notes']         ?? '');
+
+      // ── Validate ──────────────────────────────────────────────────────────────
+      $errors = [];
+      $allowed_types = ['document_fee','business_permit','cedula','other'];
+
+      if (!in_array($rec_source_type, $allowed_types, true))
+          $errors[] = 'Invalid source type.';
+      if ($rec_amount <= 0)
+          $errors[] = 'Amount must be greater than 0.';
+      if ($rec_description === '')
+          $errors[] = 'Description is required.';
+      if ($rec_collected_at === '')
+          $errors[] = 'Date collected is required.';
+
+      if (!empty($errors)) {
+          echo json_encode(['success' => false, 'message' => implode(' ', $errors)]);
+          exit;
+      }
+
+      // ── Generate OR number (as specified) ─────────────────────────────────────
+      $last  = $pdo->query('SELECT MAX(id) AS lid FROM collections')
+                  ->fetch(PDO::FETCH_ASSOC)['lid'] ?? 0;
+      $or_no = 'OR-' . date('Y') . '-' . str_pad(($last + 1), 5, '0', STR_PAD_LEFT);
+
+      // ── Insert (as specified) ─────────────────────────────────────────────────
+      $stmt = $pdo->prepare("
+          INSERT INTO collections
+              (or_number, request_id, resident_id, source_type, amount, description, collected_by, collected_at)
+          VALUES
+              (?, ?, ?, ?, ?, ?, ?, ?)
+      ");
+
+      $stmt->execute([
+          $or_no,
+          $rec_request_id,
+          $rec_resident_id,
+          $rec_source_type,
+          $rec_amount,
+          $rec_description . ($rec_notes ? ' | Notes: ' . $rec_notes : ''),
+          $currentUser['id'],
+          $rec_collected_at,
+      ]);
+
+      echo json_encode([
+          'success'   => true,
+          'message'   => 'Payment recorded successfully.',
+          'or_number' => $or_no,
+      ]);
+      exit;
+  }
+
+  // ── Search document requests (AJAX) ──────────────────────────────────────────
+  if (
+      isset($_GET['_rec_search_req']) &&
+      ($_GET['tab'] ?? '') === 'record'
+  ) {
+      header('Content-Type: application/json');
+      $q = '%' . trim($_GET['q'] ?? '') . '%';
+      $rows = $pdo->prepare("
+          SELECT   id, reference_number, document_type,
+                  CONCAT(r.first_name,' ',r.last_name) AS resident_name,
+                  r.id AS resident_id
+          FROM     document_requests dr
+          JOIN     residents r ON r.id = dr.resident_id
+          WHERE    dr.reference_number LIKE :q
+            OR    CONCAT(r.first_name,' ',r.last_name) LIKE :q
+          LIMIT 10
+      ");
+      $rows->execute([':q' => $q]);
+      echo json_encode($rows->fetchAll(PDO::FETCH_ASSOC));
+      exit;
+  }
+
+  /* Pre-generate OR preview for display */
+  $preview_last  = $pdo->query('SELECT MAX(id) AS lid FROM collections')
+                        ->fetch(PDO::FETCH_ASSOC)['lid'] ?? 0;
+  $preview_or_no = 'OR-' . date('Y') . '-' . str_pad(($preview_last + 1), 5, '0', STR_PAD_LEFT);
+
+  // ─── Configuration ───────────────────────────────────────────────────────────
+  define('LARGE_EXPENDITURE_THRESHOLD', 5000);
   
-  // ════════════════════════════════════════════════════════════════
-  // EXPORT: PDF  (FPDF)
-  // ════════════════════════════════════════════════════════════════
-  if ($export === 'pdf') {
-      if (!file_exists($fpdfPath)) {
-          http_response_code(500);
-          echo json_encode(['error' => 'FPDF library not found at: ' . $fpdfPath]);
+  // ─── Helpers ─────────────────────────────────────────────────────────────────
+  function formatAmount(float $amount): string {
+      return '₱' . number_format($amount, 2);
+  }
+  
+  function getStatusBadge(string $status): string {
+      if ($status === 'Approved') {
+          return '<span class="exp-badge exp-badge--approved">Approved</span>';
+      }
+      return '<span class="exp-badge exp-badge--pending">Pending Captain Approval</span>';
+  }
+  
+  function getCategoryIcon(string $cat): string {
+      $icons = [
+          'Personnel'      => '👤',
+          'Supplies'       => '📦',
+          'Infrastructure' => '🏗️',
+          'Events'         => '🎉',
+          'Maintenance'    => '🔧',
+          'Other'          => '📁',
+      ];
+      return $icons[$cat] ?? '📁';
+  }
+  
+  // ─── Filter inputs ────────────────────────────────────────────────────────────
+  $categoryFilter = $_GET['category']   ?? 'all';
+  $dateFrom = !empty($_GET['date_from'])
+      ? $_GET['date_from'] . " 00:00:00"
+      : date('Y-m-01 00:00:00');
+
+  $dateTo = !empty($_GET['date_to'])
+      ? $_GET['date_to'] . " 23:59:59"
+      : date('Y-m-d 23:59:59');
+  $searchQuery    = $_GET['search']     ?? '';
+  
+  $validCategories = ['all', 'Personnel', 'Supplies', 'Infrastructure', 'Events', 'Maintenance', 'Other'];
+  if (!in_array($categoryFilter, $validCategories, true)) {
+      $categoryFilter = 'all';
+  }
+  
+  $expenditures = [];
+  $subtotals    = [];
+  $totalAmount  = 0;
+  
+  if (isset($pdo)) {   // $pdo = your PDO connection
+      if ($categoryFilter === 'all') {
+          $sql  = "SELECT e.id, e.category, e.description, e.amount,
+                          e.disbursement_date, e.payee, e.supporting_doc_path,
+                          u_rec.username AS recorded_by_name,
+                          u_apr.username AS approved_by_name,
+                          CASE WHEN e.approved_by IS NOT NULL THEN 'Approved'
+                              ELSE 'Pending Approval' END AS approval_status
+                  FROM expenditures e
+                  JOIN users u_rec ON u_rec.id = e.recorded_by
+                  LEFT JOIN users u_apr ON u_apr.id = e.approved_by
+                  WHERE e.disbursement_date BETWEEN ? AND ?
+                  ORDER BY e.disbursement_date DESC";
+          $stmt = $pdo->prepare($sql);
+          $stmt->execute([$dateFrom, $dateTo]);
+      } else {
+          $sql  = "SELECT e.id, e.category, e.description, e.amount,
+                          e.disbursement_date, e.payee, e.supporting_doc_path,
+                          u_rec.username AS recorded_by_name,
+                          u_apr.username AS approved_by_name,
+                          CASE WHEN e.approved_by IS NOT NULL THEN 'Approved'
+                              ELSE 'Pending Approval' END AS approval_status
+                  FROM expenditures e
+                  JOIN users u_rec ON u_rec.id = e.recorded_by
+                  LEFT JOIN users u_apr ON u_apr.id = e.approved_by
+                  WHERE e.category = ? AND e.disbursement_date BETWEEN ? AND ?
+                  ORDER BY e.disbursement_date DESC";
+          $stmt = $pdo->prepare($sql);
+          $stmt->execute([$categoryFilter, $dateFrom, $dateTo]);
+      }
+      $expenditures = $stmt->fetchAll(PDO::FETCH_ASSOC);
+  }
+  
+  // Apply search filter (PHP-side on description/payee)
+  if ($searchQuery !== '') {
+      $q = strtolower($searchQuery);
+      $expenditures = array_filter($expenditures, function($row) use ($q) {
+          return str_contains(strtolower($row['description']), $q)
+              || str_contains(strtolower($row['payee']), $q);
+      });
+      $expenditures = array_values($expenditures);
+  }
+  
+  // Compute subtotals
+  foreach ($expenditures as $row) {
+      $cat = $row['category'];
+      $subtotals[$cat] = ($subtotals[$cat] ?? 0) + $row['amount'];
+      $totalAmount += $row['amount'];
+  }
+
+  // ── Config ──────────────────────────────────────────────────────────────
+  $APPROVAL_THRESHOLD = 5000;          // configurable
+  $UPLOAD_DIR         = 'uploads/expenditures/';
+  $MAX_FILE_SIZE      = 5 * 1024 * 1024; // 5 MB
+
+  $errors  = [];
+  $success = false;
+
+  if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+
+      // ── Sanitise & validate inputs ──────────────────────────────────────
+      $category          = trim($_POST['category']          ?? '');
+      $description       = trim($_POST['description']       ?? '');
+      $amount            = $_POST['amount']                 ?? '';
+      $disbursement_date = trim($_POST['disbursement_date'] ?? '');
+      $payee             = trim($_POST['payee']             ?? '');
+      $notes             = trim($_POST['notes']             ?? '');
+      $recorded_by       = $_SESSION['user_id']             ?? null;
+
+      $allowed_categories = ['Personnel','Supplies','Infrastructure','Events','Maintenance','Other'];
+
+      if (!in_array($category, $allowed_categories))           $errors[] = 'Invalid category selected.';
+      if ($description === '')                                  $errors[] = 'Description is required.';
+      if (!is_numeric($amount) || (float)$amount <= 0)         $errors[] = 'Amount must be a number greater than 0.';
+      if (!$disbursement_date || !strtotime($disbursement_date)) $errors[] = 'Invalid disbursement date.';
+      if ($payee === '')                                        $errors[] = 'Payee is required.';
+
+      $amount = (float)$amount;
+
+      // ── File upload ─────────────────────────────────────────────────────
+      $supporting_doc_path = null;
+
+      if (!empty($_FILES['supporting_doc']['name'])) {
+          $file      = $_FILES['supporting_doc'];
+          $allowed   = ['image/jpeg','image/png','application/pdf'];
+          $ext_map   = ['image/jpeg'=>'jpg','image/png'=>'png','application/pdf'=>'pdf'];
+          $mime      = mime_content_type($file['tmp_name']);
+
+          if (!in_array($mime, $allowed)) {
+              $errors[] = 'Supporting document must be JPG, PNG, or PDF.';
+          } elseif ($file['size'] > $MAX_FILE_SIZE) {
+              $errors[] = 'Supporting document must not exceed 5 MB.';
+          } else {
+              if (!is_dir($UPLOAD_DIR)) mkdir($UPLOAD_DIR, 0755, true);
+              $filename            = uniqid('doc_', true) . '.' . $ext_map[$mime];
+              $supporting_doc_path = $UPLOAD_DIR . $filename;
+              if (!move_uploaded_file($file['tmp_name'], $supporting_doc_path)) {
+                  $errors[] = 'File upload failed. Please try again.';
+                  $supporting_doc_path = null;
+              }
+          }
+      }
+
+      // ── Persist to DB ───────────────────────────────────────────────────
+      if (empty($errors)) {
+          // approved_by left NULL until Captain approves
+          $sql = "INSERT INTO expenditures
+                      (category, description, amount, disbursement_date, payee, supporting_doc_path, recorded_by)
+                  VALUES (?,?,?,?,?,?,?)";
+
+          $stmt = $pdo->prepare($sql);
+          $stmt->execute([
+              $category,
+              $description,
+              $amount,
+              $disbursement_date,
+              $payee,
+              $supporting_doc_path,
+              $recorded_by
+          ]);
+
+          // ── Approval threshold rule ─────────────────────────────────────
+          $new_id = $pdo->lastInsertId();
+          if ($amount < $APPROVAL_THRESHOLD) {
+              $pdo->prepare("UPDATE expenditures SET approval_status='Approved', approved_by=? WHERE id=?")
+                  ->execute([$recorded_by, $new_id]);
+              $toast_msg  = 'Expenditure recorded and auto-approved.';
+              $toast_type = 'success';
+          } else {
+              $pdo->prepare("UPDATE expenditures SET approval_status='Pending Captain Approval' WHERE id=?")
+                  ->execute([$new_id]);
+              $toast_msg  = 'Expenditure submitted — pending Captain approval.';
+              $toast_type = 'pending';
+          }
+
+          $success = true;
+      }
+  }
+
+  // ── Default date = today ────────────────────────────────────────────────
+  $default_date = date('Y-m-d');
+
+  /* ── Fiscal year ─────────────────────────────────────────────────── */
+  $fiscal_year = isset($_GET['fy']) ? (int)$_GET['fy'] : (int)date('Y');
+  $min_year    = 2020;
+  $max_year    = (int)date('Y') + 1;
+  
+  /* ── AJAX / POST actions ─────────────────────────────────────────── */
+  if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['_bud_action'])) {
+      header('Content-Type: application/json');
+  
+      $action = $_POST['_bud_action'];
+  
+      /* ── Add budget item ─────────────────────────────────────────── */
+      if ($action === 'add') {
+        error_log("POST DATA: " . json_encode($_POST));
+          $category         = trim($_POST['category']         ?? '');
+          $description      = trim($_POST['description']      ?? '');
+          $allocated_amount = (float)($_POST['allocated_amount'] ?? 0);
+          if (!isset($_POST['fiscal_year']) || !is_numeric($_POST['fiscal_year'])) {
+              echo json_encode(['success'=>false,'message'=>'Invalid fiscal year.']);
+              exit;
+          }
+
+          $fy = (int) $_POST['fiscal_year'];
+  
+          $allowed = ['Personnel','Supplies','Infrastructure','Events','Maintenance','Other'];
+          if (!in_array($category, $allowed))          { echo json_encode(['success'=>false,'message'=>'Invalid category.']); exit; }
+          if ($allocated_amount <= 0)                   { echo json_encode(['success'=>false,'message'=>'Amount must be greater than 0.']); exit; }
+  
+          // Prevent duplicate category in same fiscal year
+          $chk = $pdo->prepare("SELECT id FROM budget_items WHERE category=? AND fiscal_year=?");
+          $chk->execute([$category, $fy]);
+          if ($chk->fetch()) { echo json_encode(['success'=>false,'message'=>'This category already has a budget line for '.$fy.'.']); exit; }
+  
+          $created_by = (int)$_SESSION['user_id'];
+
+          $stmt = $pdo->prepare("
+              INSERT INTO budget_items
+              (
+                  category,
+                  description,
+                  allocated_amount,
+                  fiscal_year,
+                  created_by
+              )
+              VALUES (?, ?, ?, ?, ?)
+          ");
+
+          $stmt->execute([
+              $category,
+              $description,
+              $allocated_amount,
+              $fy,
+              $created_by
+          ]);
+          echo json_encode(['success'=>true,'message'=>'Budget item added.','id'=>$pdo->lastInsertId()]);
           exit;
       }
   
-      require_once $fpdfPath;
+      /* ── Edit budget item ────────────────────────────────────────── */
+      if ($action === 'edit') {
+          $id               = (int)($_POST['id']               ?? 0);
+          $allocated_amount = (float)($_POST['allocated_amount'] ?? 0);
+          $description      = trim($_POST['description']       ?? '');
   
-      class SummaryPDF extends FPDF {
-          public string $barangay  = 'BARANGAY SAMPLE';
-          public string $address   = 'Municipality of Sample, Province of Sample';
-          public string $period    = '';
-          public string $genDate   = '';
-          public string $prepBy    = '';
-          public string $reportTitle = 'MONTHLY FINANCIAL SUMMARY';
+          if ($id <= 0)             { echo json_encode(['success'=>false,'message'=>'Invalid item.']); exit; }
+          if ($allocated_amount <= 0){ echo json_encode(['success'=>false,'message'=>'Amount must be greater than 0.']); exit; }
   
-          // Brand navy
-          private array $navy  = [11, 37, 69];
-          private array $gold  = [201, 150, 30];
-          private array $white = [255, 255, 255];
-          private array $light = [250, 247, 239];
-          private array $text  = [32, 48, 71];
-          private array $muted = [102, 112, 133];
-  
-          function Header(): void {
-              // Navy header bar
-              $this->SetFillColor(...$this->navy);
-              $this->Rect(0, 0, 210, 32, 'F');
-  
-              // Gold accent line
-              $this->SetFillColor(...$this->gold);
-              $this->Rect(0, 32, 210, 1.5, 'F');
-  
-              $this->SetTextColor(...$this->white);
-              $this->SetFont('Arial', 'B', 14);
-              $this->SetY(6);
-              $this->Cell(0, 6, $this->barangay, 0, 1, 'C');
-  
-              $this->SetFont('Arial', '', 8);
-              $this->Cell(0, 5, 'Republic of the Philippines  |  ' . $this->address, 0, 1, 'C');
-  
-              $this->SetFont('Arial', 'B', 10);
-              $this->SetTextColor(...$this->gold);
-              $this->Cell(0, 6, $this->reportTitle, 0, 1, 'C');
-  
-              // Meta row
-              $this->SetFillColor(...$this->light);
-              $this->Rect(10, 36, 190, 12, 'F');
-              $this->SetFont('Arial', '', 8);
-              $this->SetTextColor(...$this->muted);
-              $this->SetY(38);
-              $this->SetX(12);
-              $this->Cell(63, 4, 'Period Covered: ' . $this->period,     0, 0);
-              $this->Cell(63, 4, 'Date Generated: ' . $this->genDate,    0, 0);
-              $this->Cell(63, 4, 'Prepared By: '    . $this->prepBy,     0, 0);
-              $this->Ln(10);
-          }
-  
-          function Footer(): void {
-              $this->SetY(-12);
-              $this->SetFont('Arial', 'I', 7);
-              $this->SetTextColor(...$this->muted);
-              $this->Cell(0, 5, 'Page ' . $this->PageNo() . '  |  ' . $this->barangay . ' — ' . $this->reportTitle, 0, 0, 'C');
-          }
-  
-          /** Section heading */
-          function sectionHead(string $title): void {
-              $this->SetFillColor(...$this->navy);
-              $this->SetTextColor(...$this->white);
-              $this->SetFont('Arial', 'B', 9);
-              $this->Cell(0, 7, '  ' . strtoupper($title), 0, 1, 'L', true);
-              $this->Ln(1);
-          }
-  
-          /** Column header row */
-          function tableHead(array $cols, array $widths, array $aligns): void {
-              $this->SetFillColor(...$this->navy);
-              $this->SetTextColor(...$this->white);
-              $this->SetFont('Arial', 'B', 8);
-              foreach ($cols as $i => $col) {
-                  $this->Cell($widths[$i], 6, $col, 0, 0, $aligns[$i], true);
-              }
-              $this->Ln();
-          }
-  
-          /** Data row */
-          function tableRow(array $cells, array $widths, array $aligns, bool $shade = false): void {
-              if ($shade) {
-                  $this->SetFillColor(...$this->light);
-              } else {
-                  $this->SetFillColor(...$this->white);
-              }
-              $this->SetTextColor(...$this->text);
-              $this->SetFont('Arial', '', 8);
-              foreach ($cells as $i => $cell) {
-                  $this->Cell($widths[$i], 6, $cell, 0, 0, $aligns[$i], true);
-              }
-              $this->Ln();
-              // thin border line
-              $this->SetDrawColor(230, 222, 206);
-              $this->Line(10, $this->GetY(), 200, $this->GetY());
-          }
-  
-          /** Totals / summary row */
-          function totalRow(array $cells, array $widths, array $aligns): void {
-              $this->SetFillColor(...$this->light);
-              $this->SetTextColor(...$this->navy);
-              $this->SetFont('Arial', 'B', 8);
-              foreach ($cells as $i => $cell) {
-                  $this->Cell($widths[$i], 7, $cell, 0, 0, $aligns[$i], true);
-              }
-              $this->Ln(9);
-          }
-  
-          /** Net balance highlight box */
-          function netBox(string $label, float $amount): void {
-              $this->Ln(4);
-              $color = $amount >= 0 ? [22, 163, 74] : [220, 38, 38];
-              $bg    = $amount >= 0 ? [236, 253, 243] : [254, 242, 242];
-              $this->SetFillColor(...$bg);
-              $this->SetDrawColor(...$color);
-              $this->RoundedRect(10, $this->GetY(), 190, 14, 3, 'DF');
-              $this->SetFont('Arial', 'B', 11);
-              $this->SetTextColor(...$color);
-              $this->SetY($this->GetY() + 3);
-              $this->Cell(130, 6, '  ' . strtoupper($label), 0, 0, 'L');
-              $this->Cell(60,  6, '₱ ' . number_format(abs($amount), 2), 0, 0, 'R');
-              $this->Ln(10);
-          }
-  
-          /** FPDF doesn't have RoundedRect natively — simple polyfill */
-          function RoundedRect(float $x, float $y, float $w, float $h, float $r, string $style = ''): void {
-              $k  = $this->k;
-              $hp = $this->h;
-              if ($style === 'F') $op = 'f';
-              elseif ($style === 'FD' || $style === 'DF') $op = 'B';
-              else $op = 'S';
-              $MyArc = 4 / 3 * (sqrt(2) - 1);
-              $this->_out(sprintf('%.2F %.2F m', ($x + $r) * $k, ($hp - $y) * $k));
-              $xc = $x + $w - $r; $yc = $y + $r;
-              $this->_out(sprintf('%.2F %.2F l', $xc * $k, ($hp - $y) * $k));
-              $this->_Arc($xc + $r * $MyArc, $yc - $r, $xc + $r, $yc - $r * $MyArc, $xc + $r, $yc);
-              $xc = $x + $w - $r; $yc = $y + $h - $r;
-              $this->_out(sprintf('%.2F %.2F l', ($x + $w) * $k, ($hp - $yc) * $k));
-              $this->_Arc($xc + $r, $yc + $r * $MyArc, $xc + $r * $MyArc, $yc + $r, $xc, $yc + $r);
-              $xc = $x + $r; $yc = $y + $h - $r;
-              $this->_out(sprintf('%.2F %.2F l', $xc * $k, ($hp - ($y + $h)) * $k));
-              $this->_Arc($xc - $r * $MyArc, $yc + $r, $xc - $r, $yc + $r * $MyArc, $xc - $r, $yc);
-              $xc = $x + $r; $yc = $y + $r;
-              $this->_out(sprintf('%.2F %.2F l', $x * $k, ($hp - $yc) * $k));
-              $this->_Arc($xc - $r, $yc - $r * $MyArc, $xc - $r * $MyArc, $yc - $r, $xc, $yc - $r);
-              $this->_out($op);
-          }
-  
-          function _Arc(float $x1, float $y1, float $x2, float $y2, float $x3, float $y3): void {
-              $h = $this->h;
-              $this->_out(sprintf('%.2F %.2F %.2F %.2F %.2F %.2F c',
-                  $x1 * $this->k, ($h - $y1) * $this->k,
-                  $x2 * $this->k, ($h - $y2) * $this->k,
-                  $x3 * $this->k, ($h - $y3) * $this->k));
-          }
+          $stmt = $pdo->prepare("UPDATE budget_items SET allocated_amount=?, description=? WHERE id=?");
+          $stmt->execute([$allocated_amount, $description, $id]);
+          echo json_encode(['success'=>true,'message'=>'Budget item updated.']);
+          exit;
       }
   
-      // Build PDF
-      $pdf = new SummaryPDF('P', 'mm', 'A4');
-      $pdf->barangay    = 'BARANGAY SAMPLE';
-      $pdf->address     = 'Municipality of Sample, Province of Sample';
-      $pdf->period      = $periodLabel;
-      $pdf->genDate     = $generatedDate;
-      $pdf->prepBy      = $preparedBy;
-      $pdf->reportTitle = 'MONTHLY FINANCIAL SUMMARY REPORT';
-      $pdf->SetMargins(10, 52, 10);
-      $pdf->SetAutoPageBreak(true, 15);
-      $pdf->AddPage();
+      /* ── Delete budget item ──────────────────────────────────────── */
+      if ($action === 'delete') {
+          $id = (int)($_POST['id'] ?? 0);
+          if ($id <= 0) { echo json_encode(['success'=>false,'message'=>'Invalid item.']); exit; }
   
-      // ── Collections section ──────────────────
-      $pdf->sectionHead('Income / Collections');
-      $pdf->tableHead(
-          ['Source Type', 'Transactions', 'Amount (₱)'],
-          [110, 35, 45],
-          ['L', 'C', 'R']
-      );
-      foreach ($collections as $i => $r) {
-          $pdf->tableRow(
-              [$r['label'], $r['count'], number_format($r['amount'], 2)],
-              [110, 35, 45],
-              ['L', 'C', 'R'],
-              $i % 2 === 1
-          );
+          // Only delete if no expenditures are linked
+          $row   = $pdo->prepare("SELECT category, fiscal_year FROM budget_items WHERE id=?");
+          $row->execute([$id]);
+          $item  = $row->fetch(PDO::FETCH_ASSOC);
+          if (!$item) { echo json_encode(['success'=>false,'message'=>'Item not found.']); exit; }
+  
+          $spent = $pdo->prepare("SELECT COUNT(*) FROM expenditures WHERE category=? AND YEAR(disbursement_date)=?");
+          $spent->execute([$item['category'], $item['fiscal_year']]);
+          if ($spent->fetchColumn() > 0) {
+              echo json_encode(['success'=>false,'message'=>'Cannot delete: expenditures are linked to this budget line.']);
+              exit;
+          }
+  
+          $pdo->prepare("DELETE FROM budget_items WHERE id=?")->execute([$id]);
+          echo json_encode(['success'=>true,'message'=>'Budget item deleted.']);
+          exit;
       }
-      $pdf->totalRow(
-          ['TOTAL COLLECTIONS', array_sum(array_column($collections, 'count')), number_format($totalCollections, 2)],
-          [110, 35, 45],
-          ['L', 'C', 'R']
-      );
   
-      // ── Expenditures section ─────────────────
-      $pdf->sectionHead('Expenditures');
-      $pdf->tableHead(
-          ['Category', 'Transactions', 'Amount (₱)'],
-          [110, 35, 45],
-          ['L', 'C', 'R']
-      );
-      foreach ($expenditures as $i => $r) {
-          $pdf->tableRow(
-              [$r['label'], $r['count'], number_format($r['amount'], 2)],
-              [110, 35, 45],
-              ['L', 'C', 'R'],
-              $i % 2 === 1
-          );
-      }
-      $pdf->totalRow(
-          ['TOTAL EXPENDITURES', array_sum(array_column($expenditures, 'count')), number_format($totalExpenditures, 2)],
-          [110, 35, 45],
-          ['L', 'C', 'R']
-      );
-  
-      // ── Net balance box ──────────────────────
-      $netLabel = $netBalance >= 0 ? 'Net Surplus' : 'Net Deficit';
-      $pdf->netBox($netLabel, $netBalance);
-  
-      // ── Signature block ──────────────────────
-      $pdf->Ln(10);
-      $pdf->SetFont('Arial', '', 8);
-      $pdf->SetTextColor(102, 112, 133);
-      $pdf->Cell(95, 5, 'Prepared by:', 0, 0, 'C');
-      $pdf->Cell(95, 5, 'Noted by:', 0, 1, 'C');
-      $pdf->Ln(12);
-      $pdf->SetDrawColor(11, 37, 69);
-      $pdf->Line(20, $pdf->GetY(), 95, $pdf->GetY());
-      $pdf->Line(115, $pdf->GetY(), 190, $pdf->GetY());
-      $pdf->Ln(1);
-      $pdf->SetFont('Arial', 'B', 8);
-      $pdf->SetTextColor(11, 37, 69);
-      $pdf->Cell(95, 4, 'JUAN DELA CRUZ', 0, 0, 'C');
-      $pdf->Cell(95, 4, 'MARIA SANTOS',   0, 1, 'C');
-      $pdf->SetFont('Arial', '', 7);
-      $pdf->SetTextColor(102, 112, 133);
-      $pdf->Cell(95, 4, 'Barangay Treasurer', 0, 0, 'C');
-      $pdf->Cell(95, 4, 'Barangay Captain',   0, 1, 'C');
-  
-      $filename = 'financial_summary_' . $year . '_' . str_pad((string)$month, 2, '0', STR_PAD_LEFT) . '.pdf';
-      $pdf->Output('D', $filename);
+      echo json_encode(['success'=>false,'message'=>'Unknown action.']);
       exit;
   }
   
-  // ════════════════════════════════════════════════════════════════
-  // EXPORT: PREVIEW  (JSON for AJAX)
-  // ════════════════════════════════════════════════════════════════
-  header('Content-Type: application/json; charset=UTF-8');
+  /* ── Budget items with spent amounts ────────────────────────────── */
+  $items_stmt = $pdo->prepare("
+      SELECT b.id, b.category, b.description, b.allocated_amount,
+            COALESCE(SUM(e.amount), 0) AS spent,
+            b.allocated_amount - COALESCE(SUM(e.amount), 0) AS remaining,
+            ROUND(COALESCE(SUM(e.amount),0) / b.allocated_amount * 100, 1) AS pct_used
+      FROM budget_items b
+      LEFT JOIN expenditures e
+            ON e.category = b.category
+            AND YEAR(e.disbursement_date) = b.fiscal_year
+      WHERE b.fiscal_year = ?
+      GROUP BY b.id
+      ORDER BY b.category
+  ");
+  $items_stmt->execute([$fiscal_year]);
+  $budget_items = $items_stmt->fetchAll(PDO::FETCH_ASSOC);
   
-  echo json_encode([
-      'period'      => $periodLabel,
-      'generated'   => $generatedDate,
-      'prepared_by' => $preparedBy,
-      'collections' => array_map(fn($r) => [
-          'label'  => $r['label'],
-          'count'  => $r['count'],
-          'amount' => number_format($r['amount'], 2),
-      ], $collections),
-      'expenditures' => array_map(fn($r) => [
-          'label'  => $r['label'],
-          'count'  => $r['count'],
-          'amount' => number_format($r['amount'], 2),
-      ], $expenditures),
-      'totals' => [
-          'collections'  => number_format($totalCollections,  2),
-          'expenditures' => number_format($totalExpenditures, 2),
-          'net_balance'  => number_format(abs($netBalance),   2),
-          'net_label'    => $netBalance >= 0 ? 'Net Surplus' : 'Net Deficit',
-          'net_positive' => $netBalance >= 0,
-      ],
-  ]);
+  /* Total budget vs total spent */
+  $stmt = $pdo->prepare("
+      SELECT COALESCE(SUM(allocated_amount),0)
+      FROM budget_items
+      WHERE fiscal_year = ?
+  ");
+  $stmt->execute([$fiscal_year]);
+  $total_budget = (float)$stmt->fetchColumn();
 
-}
+  $stmt = $pdo->prepare("
+      SELECT COALESCE(SUM(amount),0)
+      FROM expenditures
+      WHERE YEAR(disbursement_date) = ?
+      AND approval_status = 'approved'
+  ");
+  $stmt->execute([$fiscal_year]);
+  $total_spent = (float)$stmt->fetchColumn();
+  
+  $total_budget    = (float)($totals['total_budget'] ?? 0);
+  $total_spent     = (float)($totals['total_spent']  ?? 0);
+  $total_remaining = $total_budget - $total_spent;
+  $total_pct       = $total_budget > 0 ? round($total_spent / $total_budget * 100, 1) : 0;
+  
+  $categories = ['Personnel','Supplies','Infrastructure','Events','Maintenance','Other'];
+
+  $office_address = 'Brgy. Sta. Rosa 1, Noveleta, Cavite';
+  $contact_number = '+63 912 000 0000';
+  $barangay_hotline = 'Emergency Hotline 911';
+  $emergency_numbers = 'PNP 166, Fire 1555, NDRRMC 825-0000';
+
+  // Static placeholder values
+  $profile_percent       = 80;
+  $sidebar_missing_summary = 'Complete your profile';
+  $unread_count          = 3;
+  $notifications         = [
+      ['is_read' => 0, 'link' => '#', 'title' => 'Budget Approved', 'message' => 'Q2 budget has been approved.', 'created_at' => '2025-05-24 09:00:00'],
+      ['is_read' => 1, 'link' => '#', 'title' => 'New Payment Recorded', 'message' => 'Business permit fee collected.', 'created_at' => '2025-05-23 14:30:00'],
+  ];
+  $initials              = 'MT';
+  $first_name            = 'Maria';
+  $display_name          = 'Maria Torres';
+  $user                  = ['email' => 'maria.torres@brgy-starosa1.gov.ph'];
+  $today_line            = date('l, F j, Y');
+  $greeting              = 'Good morning';
+  $pending_count         = '₱ 48,250';
+  $ready_count           = '₱ 12,800';
+  $total_count           = '64%';
+  $document_processing_times = [];
+
+  // Role & fiscal year
+  $role_label            = 'Barangay Treasurer';
+  $fiscal_year_label = 'Fiscal Year ' . $fiscal_year;
+
+  function e($val) { return htmlspecialchars((string)$val, ENT_QUOTES, 'UTF-8'); }
+  function rd_date($val) { return date('M j, Y g:i A', strtotime($val)); }
+
+  $monthlyCollections = array_fill(0, 12, 0);
+  $monthlyExpenditures = array_fill(0, 12, 0);
+
+  /* Collections */
+  $stmt = $pdo->query("
+      SELECT
+          MONTH(collected_at) AS month_num,
+          SUM(amount) AS total
+      FROM collections
+      WHERE YEAR(collected_at) = YEAR(CURDATE())
+      GROUP BY MONTH(collected_at)
+  ");
+
+  while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+      $monthlyCollections[$row['month_num'] - 1] = (float)$row['total'];
+  }
+
+  /* Collection Today */
+  $stmt = $pdo->query("
+      SELECT COALESCE(SUM(amount),0)
+      FROM collections
+      WHERE DATE(collected_at) = CURDATE()
+  ");
+
+  $today_collections = (float)$stmt->fetchColumn();
+
+  /* Collection Per Month */
+  $stmt = $pdo->query("
+      SELECT COALESCE(SUM(amount),0)
+      FROM collections
+      WHERE YEAR(collected_at) = YEAR(CURDATE())
+        AND MONTH(collected_at) = MONTH(CURDATE())
+  ");
+
+  $month_collections = (float)$stmt->fetchColumn();
+
+  /* Collection Last Month */
+  $stmt = $pdo->query("
+      SELECT COALESCE(SUM(amount),0)
+      FROM collections
+      WHERE YEAR(collected_at) = YEAR(DATE_SUB(CURDATE(), INTERVAL 1 MONTH))
+        AND MONTH(collected_at) = MONTH(DATE_SUB(CURDATE(), INTERVAL 1 MONTH))
+  ");
+
+  $last_month_collections = (float)$stmt->fetchColumn();
+
+  if ($last_month_collections > 0) {
+      $mom_change =
+          (($month_collections - $last_month_collections)
+          / $last_month_collections) * 100;
+  } else {
+      $mom_change = 0;
+  }
+
+  $mom_positive = $mom_change >= 0;
+
+  /* Expenditures */
+  $stmt = $pdo->query("
+      SELECT
+          MONTH(disbursement_date) AS month_num,
+          SUM(amount) AS total
+      FROM expenditures
+      WHERE YEAR(disbursement_date) = YEAR(CURDATE())
+      GROUP BY MONTH(disbursement_date)
+  ");
+
+  while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+      $monthlyExpenditures[$row['month_num'] - 1] = (float)$row['total'];
+  }
+
+  /* Expenditures this month */
+  $stmt = $pdo->query("
+      SELECT COALESCE(SUM(amount),0)
+      FROM expenditures
+      WHERE YEAR(disbursement_date) = YEAR(CURDATE())
+        AND MONTH(disbursement_date) = MONTH(CURDATE())
+  ");
+
+  $month_expenditures = (float)$stmt->fetchColumn();
+
+  $chartLabels = [
+      'Jan','Feb','Mar','Apr','May','Jun',
+      'Jul','Aug','Sep','Oct','Nov','Dec'
+  ];
+
+  $net_balance = $month_collections - $month_expenditures;
+
+  $net_class = $net_balance >= 0
+      ? 'text-success'
+      : 'text-danger';
+
+  /* Total Budget Allocation */
+  $stmt = $pdo->query("
+      SELECT COALESCE(SUM(allocated_amount), 0)
+      FROM budget_items
+      WHERE fiscal_year = YEAR(CURDATE())
+  ");
+
+  $total_budget = (float)$stmt->fetchColumn();
+
+  /* Expenditures this year */
+  $stmt = $pdo->query("
+      SELECT COALESCE(SUM(amount), 0)
+      FROM expenditures
+      WHERE YEAR(disbursement_date) = YEAR(CURDATE())
+  ");
+
+  $year_expenditures = (float)$stmt->fetchColumn();
+
+  /* Pending Expenditures */
+  $stmt = $pdo->prepare("
+      SELECT *
+      FROM expenditures
+      WHERE approval_status = 'pending'
+      ORDER BY created_at DESC
+  ");
+  $stmt->execute();
+
+  $pending_expenditures = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+  /* Budget Utilization % */
+  $budget_utilization = 0;
+
+  if ($total_budget > 0) {
+      $budget_utilization = ($year_expenditures / $total_budget) * 100;
+  }
+
+  if ($budget_utilization < 50) {
+      $util_color = 'success';
+  } elseif ($budget_utilization < 80) {
+      $util_color = 'warning';
+  } else {
+      $util_color = 'danger';
+  }
+
+  $expenditure_threshold = 50000;
+
+  $exp_class = ($month_expenditures >= $expenditure_threshold)
+      ? 'text-danger fw-bold'
+      : 'text-dark';
+
+  $net_class = ($net_balance >= 0)
+      ? 'text-success fw-bold'
+      : 'text-danger fw-bold';
+
+  $util_color = ($budget_utilization >= 90)
+      ? 'danger'
+      : (($budget_utilization >= 70) ? 'warning' : 'success');
+
+  // Color logic
+  $exp_class    = ($month_expenditures >= $expenditure_threshold) ? 'text-danger fw-bold' : 'text-dark';
+  $net_class    = ($net_balance >= 0) ? 'text-success fw-bold' : 'text-danger fw-bold';
+  $util_color   = ($budget_utilization >= 90) ? 'danger' : (($budget_utilization >= 70) ? 'warning' : 'success');
+
+  /* REPORTS PHP */
+  if ($tab === 'reports' && isset($_GET['export'])) {
+
+    $month  = (int)($_GET['month'] ?? 0);
+    $year   = (int)($_GET['year'] ?? 0);
+    $export = $_GET['export'] ?? 'preview';
+
+    if ($month < 1 || $month > 12 || $year < 2000 || $year > 2100) {
+        http_response_code(400);
+        echo json_encode(['error' => 'Invalid or missing month/year parameters.']);
+        exit;
+    }
+
+    // ALL report logic here\
+    $fpdfPath = __DIR__ . '/vendor/fpdf/fpdf.php';
+
+    // ── Input validation ─────────────────────────────────────────
+    $month  = filter_input(INPUT_GET, 'month',  FILTER_VALIDATE_INT, ['options' => ['min_range' => 1,    'max_range' => 12]]);
+    $year   = filter_input(INPUT_GET, 'year',   FILTER_VALIDATE_INT, ['options' => ['min_range' => 2000, 'max_range' => 2100]]);
+    $export = trim(filter_input(INPUT_GET, 'export', FILTER_SANITIZE_SPECIAL_CHARS) ?? 'preview');
+
+    if (!$month || !$year) {
+      http_response_code(400);
+      echo json_encode(['error' => 'Invalid or missing month/year parameters.']);
+      exit;
+    }
+
+    if (!in_array($export, ['preview', 'pdf', 'csv'], true)) {
+      $export = 'preview';
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────
+    function monthName(int $m): string {
+      return date('F', mktime(0, 0, 0, $m, 1));
+    }
+    
+    function peso(float $v): string {
+      return '₱ ' . number_format(abs($v), 2);
+    }
+    
+    function pesoSigned(float $v): string {
+      $fmt = '₱ ' . number_format(abs($v), 2);
+      return $v < 0 ? '(' . $fmt . ')' : $fmt;
+    }
+
+    // ── Query 1: Collections + Expenditures breakdown (UNION ALL) ─
+    /**
+     * Exact SQL preserved from spec.
+     * Binds: month, year (collections), month, year (expenditures)
+     */
+    $sqlBreakdown = "
+        SELECT
+            source_type,
+            COUNT(*)       AS transaction_count,
+            SUM(amount)    AS total_amount
+        FROM collections
+        WHERE MONTH(collected_at)  = ? AND YEAR(collected_at)  = ?
+        GROUP BY source_type
+    
+        UNION ALL
+    
+        SELECT
+            CONCAT('EXP: ', category) AS source_type,
+            COUNT(*)                  AS transaction_count,
+            SUM(amount)               AS total_amount
+        FROM expenditures
+        WHERE MONTH(disbursement_date) = ? AND YEAR(disbursement_date) = ?
+        GROUP BY category
+    ";
+    
+    $stmtBreakdown = $pdo->prepare($sqlBreakdown);
+    $stmtBreakdown->execute([$month, $year, $month, $year]);
+    $breakdown = $stmtBreakdown->fetchAll(PDO::FETCH_ASSOC);
+
+    // ── Query 2: Net balance ──────────────────────────────────────
+    /**
+     * Exact SQL preserved from spec.
+     * Binds: month, year (collections), month, year (expenditures)
+     */
+    $sqlNet = "
+        SELECT
+            COALESCE(SUM(c.amount), 0) - COALESCE(SUM(e.amount), 0) AS net_balance
+        FROM (SELECT 1) d
+        LEFT JOIN collections  c ON MONTH(c.collected_at)       = ? AND YEAR(c.collected_at)       = ?
+        LEFT JOIN expenditures e ON MONTH(e.disbursement_date)  = ? AND YEAR(e.disbursement_date)  = ?
+    ";
+    
+    $stmtNet = $pdo->prepare($sqlNet);
+    $stmtNet->execute([$month, $year, $month, $year]);
+    $netRow = $stmtNet->fetch(PDO::FETCH_ASSOC);
+    $netBalance = (float)($netRow['net_balance'] ?? 0);
+
+    // ── Derived totals from breakdown ────────────────────────────
+    $totalCollections  = 0.0;
+    $totalExpenditures = 0.0;
+    $collections       = [];
+    $expenditures      = [];
+    
+    foreach ($breakdown as $row) {
+        $amount = (float)$row['total_amount'];
+        if (str_starts_with($row['source_type'], 'EXP: ')) {
+            $totalExpenditures += $amount;
+            $expenditures[] = [
+                'label' => substr($row['source_type'], 5), // strip 'EXP: '
+                'count' => (int)$row['transaction_count'],
+                'amount' => $amount,
+            ];
+        } else {
+            $totalCollections += $amount;
+            $collections[] = [
+                'label' => $row['source_type'],
+                'count' => (int)$row['transaction_count'],
+                'amount' => $amount,
+            ];
+        }
+    }
+    
+    $periodLabel   = monthName($month) . ' ' . $year;
+    $generatedDate = date('F j, Y');
+    $preparedBy    = 'Barangay Treasurer'; // adjust to session value if needed
+
+    // ════════════════════════════════════════════════════════════════
+    // EXPORT: CSV
+    // ════════════════════════════════════════════════════════════════
+    if ($export === 'csv') {
+        header('Content-Type: text/csv; charset=UTF-8');
+        header('Content-Disposition: attachment; filename="financial_summary_' . $year . '_' . str_pad((string)$month, 2, '0', STR_PAD_LEFT) . '.csv"');
+        header('Cache-Control: no-cache, no-store');
+    
+        $out = fopen('php://output', 'w');
+    
+        // BOM for Excel UTF-8 compatibility
+        fputs($out, "\xEF\xBB\xBF");
+    
+        fputcsv($out, ['MONTHLY FINANCIAL SUMMARY']);
+        fputcsv($out, ['Period', $periodLabel]);
+        fputcsv($out, ['Date Generated', $generatedDate]);
+        fputcsv($out, ['Prepared By', $preparedBy]);
+        fputcsv($out, []);
+    
+        fputcsv($out, ['--- COLLECTIONS ---']);
+        fputcsv($out, ['Source Type', 'Transactions', 'Amount']);
+        foreach ($collections as $r) {
+            fputcsv($out, [$r['label'], $r['count'], number_format($r['amount'], 2, '.', '')]);
+        }
+        fputcsv($out, ['TOTAL COLLECTIONS', array_sum(array_column($collections, 'count')), number_format($totalCollections, 2, '.', '')]);
+        fputcsv($out, []);
+    
+        fputcsv($out, ['--- EXPENDITURES ---']);
+        fputcsv($out, ['Category', 'Transactions', 'Amount']);
+        foreach ($expenditures as $r) {
+            fputcsv($out, [$r['label'], $r['count'], number_format($r['amount'], 2, '.', '')]);
+        }
+        fputcsv($out, ['TOTAL EXPENDITURES', array_sum(array_column($expenditures, 'count')), number_format($totalExpenditures, 2, '.', '')]);
+        fputcsv($out, []);
+    
+        $netLabel = $netBalance >= 0 ? 'NET SURPLUS' : 'NET DEFICIT';
+        fputcsv($out, [$netLabel, '', number_format(abs($netBalance), 2, '.', '')]);
+    
+        fclose($out);
+        exit;
+    }
+    
+    // ════════════════════════════════════════════════════════════════
+    // EXPORT: PDF  (FPDF)
+    // ════════════════════════════════════════════════════════════════
+    if ($export === 'pdf') {
+        if (!file_exists($fpdfPath)) {
+            http_response_code(500);
+            echo json_encode(['error' => 'FPDF library not found at: ' . $fpdfPath]);
+            exit;
+        }
+    
+        require_once $fpdfPath;
+    
+        class SummaryPDF extends FPDF {
+            public string $barangay  = 'BARANGAY SAMPLE';
+            public string $address   = 'Municipality of Sample, Province of Sample';
+            public string $period    = '';
+            public string $genDate   = '';
+            public string $prepBy    = '';
+            public string $reportTitle = 'MONTHLY FINANCIAL SUMMARY';
+    
+            // Brand navy
+            private array $navy  = [11, 37, 69];
+            private array $gold  = [201, 150, 30];
+            private array $white = [255, 255, 255];
+            private array $light = [250, 247, 239];
+            private array $text  = [32, 48, 71];
+            private array $muted = [102, 112, 133];
+    
+            function Header(): void {
+                // Navy header bar
+                $this->SetFillColor(...$this->navy);
+                $this->Rect(0, 0, 210, 32, 'F');
+    
+                // Gold accent line
+                $this->SetFillColor(...$this->gold);
+                $this->Rect(0, 32, 210, 1.5, 'F');
+    
+                $this->SetTextColor(...$this->white);
+                $this->SetFont('Arial', 'B', 14);
+                $this->SetY(6);
+                $this->Cell(0, 6, $this->barangay, 0, 1, 'C');
+    
+                $this->SetFont('Arial', '', 8);
+                $this->Cell(0, 5, 'Republic of the Philippines  |  ' . $this->address, 0, 1, 'C');
+    
+                $this->SetFont('Arial', 'B', 10);
+                $this->SetTextColor(...$this->gold);
+                $this->Cell(0, 6, $this->reportTitle, 0, 1, 'C');
+    
+                // Meta row
+                $this->SetFillColor(...$this->light);
+                $this->Rect(10, 36, 190, 12, 'F');
+                $this->SetFont('Arial', '', 8);
+                $this->SetTextColor(...$this->muted);
+                $this->SetY(38);
+                $this->SetX(12);
+                $this->Cell(63, 4, 'Period Covered: ' . $this->period,     0, 0);
+                $this->Cell(63, 4, 'Date Generated: ' . $this->genDate,    0, 0);
+                $this->Cell(63, 4, 'Prepared By: '    . $this->prepBy,     0, 0);
+                $this->Ln(10);
+            }
+    
+            function Footer(): void {
+                $this->SetY(-12);
+                $this->SetFont('Arial', 'I', 7);
+                $this->SetTextColor(...$this->muted);
+                $this->Cell(0, 5, 'Page ' . $this->PageNo() . '  |  ' . $this->barangay . ' — ' . $this->reportTitle, 0, 0, 'C');
+            }
+    
+            /** Section heading */
+            function sectionHead(string $title): void {
+                $this->SetFillColor(...$this->navy);
+                $this->SetTextColor(...$this->white);
+                $this->SetFont('Arial', 'B', 9);
+                $this->Cell(0, 7, '  ' . strtoupper($title), 0, 1, 'L', true);
+                $this->Ln(1);
+            }
+    
+            /** Column header row */
+            function tableHead(array $cols, array $widths, array $aligns): void {
+                $this->SetFillColor(...$this->navy);
+                $this->SetTextColor(...$this->white);
+                $this->SetFont('Arial', 'B', 8);
+                foreach ($cols as $i => $col) {
+                    $this->Cell($widths[$i], 6, $col, 0, 0, $aligns[$i], true);
+                }
+                $this->Ln();
+            }
+    
+            /** Data row */
+            function tableRow(array $cells, array $widths, array $aligns, bool $shade = false): void {
+                if ($shade) {
+                    $this->SetFillColor(...$this->light);
+                } else {
+                    $this->SetFillColor(...$this->white);
+                }
+                $this->SetTextColor(...$this->text);
+                $this->SetFont('Arial', '', 8);
+                foreach ($cells as $i => $cell) {
+                    $this->Cell($widths[$i], 6, $cell, 0, 0, $aligns[$i], true);
+                }
+                $this->Ln();
+                // thin border line
+                $this->SetDrawColor(230, 222, 206);
+                $this->Line(10, $this->GetY(), 200, $this->GetY());
+            }
+    
+            /** Totals / summary row */
+            function totalRow(array $cells, array $widths, array $aligns): void {
+                $this->SetFillColor(...$this->light);
+                $this->SetTextColor(...$this->navy);
+                $this->SetFont('Arial', 'B', 8);
+                foreach ($cells as $i => $cell) {
+                    $this->Cell($widths[$i], 7, $cell, 0, 0, $aligns[$i], true);
+                }
+                $this->Ln(9);
+            }
+    
+            /** Net balance highlight box */
+            function netBox(string $label, float $amount): void {
+                $this->Ln(4);
+                $color = $amount >= 0 ? [22, 163, 74] : [220, 38, 38];
+                $bg    = $amount >= 0 ? [236, 253, 243] : [254, 242, 242];
+                $this->SetFillColor(...$bg);
+                $this->SetDrawColor(...$color);
+                $this->RoundedRect(10, $this->GetY(), 190, 14, 3, 'DF');
+                $this->SetFont('Arial', 'B', 11);
+                $this->SetTextColor(...$color);
+                $this->SetY($this->GetY() + 3);
+                $this->Cell(130, 6, '  ' . strtoupper($label), 0, 0, 'L');
+                $this->Cell(60,  6, '₱ ' . number_format(abs($amount), 2), 0, 0, 'R');
+                $this->Ln(10);
+            }
+    
+            /** FPDF doesn't have RoundedRect natively — simple polyfill */
+            function RoundedRect(float $x, float $y, float $w, float $h, float $r, string $style = ''): void {
+                $k  = $this->k;
+                $hp = $this->h;
+                if ($style === 'F') $op = 'f';
+                elseif ($style === 'FD' || $style === 'DF') $op = 'B';
+                else $op = 'S';
+                $MyArc = 4 / 3 * (sqrt(2) - 1);
+                $this->_out(sprintf('%.2F %.2F m', ($x + $r) * $k, ($hp - $y) * $k));
+                $xc = $x + $w - $r; $yc = $y + $r;
+                $this->_out(sprintf('%.2F %.2F l', $xc * $k, ($hp - $y) * $k));
+                $this->_Arc($xc + $r * $MyArc, $yc - $r, $xc + $r, $yc - $r * $MyArc, $xc + $r, $yc);
+                $xc = $x + $w - $r; $yc = $y + $h - $r;
+                $this->_out(sprintf('%.2F %.2F l', ($x + $w) * $k, ($hp - $yc) * $k));
+                $this->_Arc($xc + $r, $yc + $r * $MyArc, $xc + $r * $MyArc, $yc + $r, $xc, $yc + $r);
+                $xc = $x + $r; $yc = $y + $h - $r;
+                $this->_out(sprintf('%.2F %.2F l', $xc * $k, ($hp - ($y + $h)) * $k));
+                $this->_Arc($xc - $r * $MyArc, $yc + $r, $xc - $r, $yc + $r * $MyArc, $xc - $r, $yc);
+                $xc = $x + $r; $yc = $y + $r;
+                $this->_out(sprintf('%.2F %.2F l', $x * $k, ($hp - $yc) * $k));
+                $this->_Arc($xc - $r, $yc - $r * $MyArc, $xc - $r * $MyArc, $yc - $r, $xc, $yc - $r);
+                $this->_out($op);
+            }
+    
+            function _Arc(float $x1, float $y1, float $x2, float $y2, float $x3, float $y3): void {
+                $h = $this->h;
+                $this->_out(sprintf('%.2F %.2F %.2F %.2F %.2F %.2F c',
+                    $x1 * $this->k, ($h - $y1) * $this->k,
+                    $x2 * $this->k, ($h - $y2) * $this->k,
+                    $x3 * $this->k, ($h - $y3) * $this->k));
+            }
+        }
+    
+        // Build PDF
+        $pdf = new SummaryPDF('P', 'mm', 'A4');
+        $pdf->barangay    = 'BARANGAY SAMPLE';
+        $pdf->address     = 'Municipality of Sample, Province of Sample';
+        $pdf->period      = $periodLabel;
+        $pdf->genDate     = $generatedDate;
+        $pdf->prepBy      = $preparedBy;
+        $pdf->reportTitle = 'MONTHLY FINANCIAL SUMMARY REPORT';
+        $pdf->SetMargins(10, 52, 10);
+        $pdf->SetAutoPageBreak(true, 15);
+        $pdf->AddPage();
+    
+        // ── Collections section ──────────────────
+        $pdf->sectionHead('Income / Collections');
+        $pdf->tableHead(
+            ['Source Type', 'Transactions', 'Amount (₱)'],
+            [110, 35, 45],
+            ['L', 'C', 'R']
+        );
+        foreach ($collections as $i => $r) {
+            $pdf->tableRow(
+                [$r['label'], $r['count'], number_format($r['amount'], 2)],
+                [110, 35, 45],
+                ['L', 'C', 'R'],
+                $i % 2 === 1
+            );
+        }
+        $pdf->totalRow(
+            ['TOTAL COLLECTIONS', array_sum(array_column($collections, 'count')), number_format($totalCollections, 2)],
+            [110, 35, 45],
+            ['L', 'C', 'R']
+        );
+    
+        // ── Expenditures section ─────────────────
+        $pdf->sectionHead('Expenditures');
+        $pdf->tableHead(
+            ['Category', 'Transactions', 'Amount (₱)'],
+            [110, 35, 45],
+            ['L', 'C', 'R']
+        );
+        foreach ($expenditures as $i => $r) {
+            $pdf->tableRow(
+                [$r['label'], $r['count'], number_format($r['amount'], 2)],
+                [110, 35, 45],
+                ['L', 'C', 'R'],
+                $i % 2 === 1
+            );
+        }
+        $pdf->totalRow(
+            ['TOTAL EXPENDITURES', array_sum(array_column($expenditures, 'count')), number_format($totalExpenditures, 2)],
+            [110, 35, 45],
+            ['L', 'C', 'R']
+        );
+    
+        // ── Net balance box ──────────────────────
+        $netLabel = $netBalance >= 0 ? 'Net Surplus' : 'Net Deficit';
+        $pdf->netBox($netLabel, $netBalance);
+    
+        // ── Signature block ──────────────────────
+        $pdf->Ln(10);
+        $pdf->SetFont('Arial', '', 8);
+        $pdf->SetTextColor(102, 112, 133);
+        $pdf->Cell(95, 5, 'Prepared by:', 0, 0, 'C');
+        $pdf->Cell(95, 5, 'Noted by:', 0, 1, 'C');
+        $pdf->Ln(12);
+        $pdf->SetDrawColor(11, 37, 69);
+        $pdf->Line(20, $pdf->GetY(), 95, $pdf->GetY());
+        $pdf->Line(115, $pdf->GetY(), 190, $pdf->GetY());
+        $pdf->Ln(1);
+        $pdf->SetFont('Arial', 'B', 8);
+        $pdf->SetTextColor(11, 37, 69);
+        $pdf->Cell(95, 4, 'JUAN DELA CRUZ', 0, 0, 'C');
+        $pdf->Cell(95, 4, 'MARIA SANTOS',   0, 1, 'C');
+        $pdf->SetFont('Arial', '', 7);
+        $pdf->SetTextColor(102, 112, 133);
+        $pdf->Cell(95, 4, 'Barangay Treasurer', 0, 0, 'C');
+        $pdf->Cell(95, 4, 'Barangay Captain',   0, 1, 'C');
+    
+        $filename = 'financial_summary_' . $year . '_' . str_pad((string)$month, 2, '0', STR_PAD_LEFT) . '.pdf';
+        $pdf->Output('D', $filename);
+        exit;
+    }
+    
+    // ════════════════════════════════════════════════════════════════
+    // EXPORT: PREVIEW  (JSON for AJAX)
+    // ════════════════════════════════════════════════════════════════
+    header('Content-Type: application/json; charset=UTF-8');
+    
+    echo json_encode([
+        'period'      => $periodLabel,
+        'generated'   => $generatedDate,
+        'prepared_by' => $preparedBy,
+        'collections' => array_map(fn($r) => [
+            'label'  => $r['label'],
+            'count'  => $r['count'],
+            'amount' => number_format($r['amount'], 2),
+        ], $collections),
+        'expenditures' => array_map(fn($r) => [
+            'label'  => $r['label'],
+            'count'  => $r['count'],
+            'amount' => number_format($r['amount'], 2),
+        ], $expenditures),
+        'totals' => [
+            'collections'  => number_format($totalCollections,  2),
+            'expenditures' => number_format($totalExpenditures, 2),
+            'net_balance'  => number_format(abs($netBalance),   2),
+            'net_label'    => $netBalance >= 0 ? 'Net Surplus' : 'Net Deficit',
+            'net_positive' => $netBalance >= 0,
+        ],
+    ]);
+
+  }
 ?>
 <!DOCTYPE html>
 <html lang="en">

@@ -67,6 +67,7 @@ function admin_login_e($value) {
 function getRedirectByRole($role) {
     return match ($role) {
       'treasurer' => 'finance_admin.php',
+      'kagawad' => 'kagawad_admin.php',
       default => 'dashboard.php',
     };
 }
@@ -89,7 +90,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = 'Please complete the reCAPTCHA security check.';
     } else {
         $stmt = $conn->prepare(
-            'SELECT id, fullname, email, password_hash, role, status
+            'SELECT id, username, fullname, email, password_hash, role, status
              FROM users
              WHERE email = ?
              LIMIT 1'
@@ -112,7 +113,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $role = strtolower((string)$user['role']);
             $_SESSION['user_id'] = (int)$user['id'];
+            $_SESSION['username'] = $user['username'];
             $_SESSION['email'] = $user['email'];
+            $_SESSION['fullname'] = $user['fullname'];
             $_SESSION['role'] = $role;
 
             if ($conn && $conn->query("SHOW COLUMNS FROM users LIKE 'last_login_at'")->num_rows > 0) {

@@ -180,6 +180,7 @@ function adm_page_start($title, $active, array $user, $page_class = '') {
         <span class="admin-nav__section">System</span>
         <?php adm_nav_item($active, 'settings', 'settings.php', 'fa-gear', 'System Settings'); ?>
         <?php adm_nav_item($active, 'audit', 'audit.php', 'fa-shield-halved', 'Audit Trail'); ?>
+
       <?php elseif ($role === 'treasurer'): ?>
         <span class="admin-nav__section">Dashboard</span>
         <?php adm_nav_item($active, 'dashboard', 'finance_admin.php?tab=dashboard', 'fa-house', 'Dashboard'); ?>
@@ -202,6 +203,22 @@ function adm_page_start($title, $active, array $user, $page_class = '') {
         <span class="admin-nav__section">Records</span>
         <?php adm_nav_item($active, 'issued', 'issued.php', 'fa-file-lines', 'Doc Issuance Log'); ?>
         <?php adm_nav_item($active, 'residents', 'residents.php', 'fa-users', 'Resident List'); ?>
+
+      <?php elseif ($role === 'kagawad'): ?>
+        <span class="admin-nav__section">Dashboard</span>
+        <?php adm_nav_item($active, 'dashboard', 'kagawad_admin.php', 'fa-chart-line', 'Dashboard'); ?>
+
+        <span class="admin-nav__section">My Committee</span>
+        <?php adm_nav_item($active, 'projects', 'projects.php?committee=own', 'fa-diagram-project', 'My Programs'); ?>
+        <?php adm_nav_item($active, 'project-form', 'project-form.php', 'fa-circle-plus', 'Add New Program'); ?>
+        <?php adm_nav_item($active, 'events', 'events.php?committee=own', 'fa-calendar-days', 'Events & Activities'); ?>
+        <?php adm_nav_item($active, 'announcements', 'announcements.php?author=own', 'fa-bullhorn', 'My Announcements'); ?>
+
+        <span class="admin-nav__section">Read-Only Records</span>
+        <?php adm_nav_item($active, 'residents', 'residents.php', 'fa-users', 'Resident List'); ?>
+        <?php adm_nav_item($active, 'blotter', 'blotter.php', 'fa-scale-balanced', 'Blotter Summary'); ?>
+        <?php adm_nav_item($active, 'reports', 'reports.php?type=summary', 'fa-chart-pie', 'Statistics'); ?>
+
       <?php elseif (in_array($role, ['kagawad', 'sk_chair', 'sk_kagawad'], true)): ?>
         <span class="admin-nav__section">Programs</span>
         <?php adm_nav_item($active, 'dashboard', 'dashboard.php', 'fa-chart-line', 'Dashboard'); ?>
