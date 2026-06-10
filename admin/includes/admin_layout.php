@@ -210,7 +210,11 @@ function adm_page_start($title, $active, array $user, $page_class = '') {
 
         <span class="admin-nav__section">My Committee</span>
         <?php adm_nav_item($active, 'projects', 'projects.php?committee=own', 'fa-diagram-project', 'My Programs'); ?>
-        <?php adm_nav_item($active, 'project-form', 'project-form.php', 'fa-circle-plus', 'Add New Program'); ?>
+        <?php if ($active === 'project_edit'): ?>
+          <?php adm_nav_item($active, 'project_edit', '#', 'fa-pen-to-square', 'Edit Program'); ?>
+        <?php else: ?>
+          <?php adm_nav_item($active, 'project_form', 'project_form.php', 'fa-circle-plus', 'Add New Program'); ?>
+        <?php endif; ?>
         <?php adm_nav_item($active, 'events', 'events.php?committee=own', 'fa-calendar-days', 'Events & Activities'); ?>
         <?php adm_nav_item($active, 'announcements', 'announcements.php?author=own', 'fa-bullhorn', 'My Announcements'); ?>
 

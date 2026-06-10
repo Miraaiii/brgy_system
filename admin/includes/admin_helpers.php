@@ -1533,6 +1533,52 @@ function adm_ensure_project_tables($conn) {
     );
 }
 
+function adm_user(mysqli $conn): array
+{
+    // 1. base session user
+    $user = [
+        'id'        => $_SESSION['user_id'] ?? null,
+        'email'     => $_SESSION['email'] ?? '',
+        'role'      => strtolower($_SESSION['role'] ?? ''),
+        'fullname'  => $_SESSION['fullname'] ?? '',
+        'username'  => $_SESSION['username'] ?? '',
+        'committee' => $_SESSION['committee'] ?? null,
+    ];
+
+    if (!$user['id']) {
+        return $user;
+    }
+
+    // 2. enrich from officials table (source of truth)
+    if (adm_table_exists($conn, 'officials')) {
+        $official = adm_fetch_one(
+            $conn,
+            'SELECT committee, position
+             FROM officials
+             WHERE user_id = ? AND is_active = 1
+             ORDER BY term_end DESC
+             LIMIT 1',
+            'i',
+            [(int)$user['id']]
+        );
+
+        if ($official) {
+            $user['committee'] = $official['committee'] ?? $user['committee'];
+            $user['position']  = $official['position'] ?? null;
+        }
+    }
+
+    // 3. ROLE FLAGS (this is the real upgrade)
+    $user['is_captain'] = $user['role'] === 'captain';
+
+    $user['can_view_all'] = in_array($user['role'], [
+        'captain',
+        'sk_chair'
+    ], true);
+
+    return $user;
+}
+
 function adm_user_role_values($conn) {
     $row = adm_fetch_one($conn, "SHOW COLUMNS FROM users LIKE 'role'");
     if (!$row || empty($row['Type'])) {

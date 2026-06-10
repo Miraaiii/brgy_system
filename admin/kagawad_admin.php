@@ -20,7 +20,8 @@
         'email'    => $_SESSION['email'],
         'role'     => $_SESSION['role'],
         'fullname' => $_SESSION['fullname'] ?? 'Kagawad',
-        'username' => $_SESSION['username']
+        'username' => $_SESSION['username'],
+        'committee' => $_SESSION['committee']
     ];
 
     adm_page_start(
@@ -518,7 +519,7 @@
                                         <td>
                                             <div class="progress-wrap">
                                                 <span class="progress-label"><?= $progress ?>%</span>
-                                                <div class="progress-track">
+                                                <div class="progress-meter progress-meter--small">
                                                     <span style="width: <?= $progress ?>%;"></span>
                                                 </div>
                                             </div>

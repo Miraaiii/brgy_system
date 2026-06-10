@@ -1,21 +1,53 @@
 <?php
 require_once __DIR__ . '/includes/admin_layout.php';
 
-$user = adm_require_admin($conn, ['captain', 'kagawad', 'sk_chair', 'sk_kagawad']);
 $csrf = adm_action_token();
-$role = strtolower(trim((string)($user['role'] ?? '')));
-$is_captain = $role === 'captain';
 adm_ensure_project_tables($conn);
 
-$current_official = adm_table_exists($conn, 'officials')
-    ? adm_fetch_one(
-        $conn,
-        'SELECT committee FROM officials WHERE user_id = ? AND is_active = 1 ORDER BY term_end DESC LIMIT 1',
-        'i',
-        [(int)$user['id']]
-    )
-    : null;
-$own_committee = trim((string)($current_official['committee'] ?? ''));
+/* SINGLE SOURCE OF USER (ONLY ONCE) */
+$user = adm_user($conn);
+
+$committee_filter = $_GET['committee'] ?? '';
+
+/* ROLE-BASED FILTER */
+if (!$user['is_captain']) {
+    $committee_filter = $user['committee'];
+} elseif ($committee_filter === '') {
+    $committee_filter = '';
+}
+
+/* LIST OF ALL COMMISSIONS */
+$committees = [];
+
+if (adm_table_exists($conn, 'officials')) {
+    $result = $conn->query("
+        SELECT DISTINCT committee
+        FROM officials
+        WHERE committee IS NOT NULL AND committee != ''
+        ORDER BY committee ASC
+    ");
+
+    if ($result && $result->num_rows > 0) {
+        $committees = $result->fetch_all(MYSQLI_ASSOC);
+    }
+}
+
+/* FLAGS */
+$is_captain = $user['is_captain'];
+$active_committee = $user['committee'];
+
+/* QUERY LOGIC */
+if ($user['can_view_all']) {
+    $result = $conn->query("SELECT * FROM projects");
+} else {
+    $stmt = $conn->prepare("
+        SELECT * FROM projects
+        WHERE committee = ?
+    ");
+    $stmt->bind_param("s", $user['committee']);
+    $stmt->execute();
+    $result = $stmt->get_result();
+}
 
 function projects_upload_photos($project_id, $user_id) {
     if (empty($_FILES['photos']['name']) || !is_array($_FILES['photos']['name'])) {
@@ -178,27 +210,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit();
 }
 
-$committee_filter = trim((string)($_GET['committee'] ?? ''));
+$committee_filter = $_GET['committee'] ?? '';
 $status_filter = strtolower(trim((string)($_GET['status'] ?? '')));
 $edit_id = (int)($_GET['edit'] ?? 0);
 
 $where = ['p.archived_at IS NULL'];
 $types = '';
 $params = [];
-if (!$is_captain) {
+
+if (!$user['is_captain']) {
     $where[] = 'p.committee = ?';
     $types .= 's';
-    $params[] = $own_committee;
+    $params[] = $user['committee']; // ✅ FIX HERE
+
 } elseif ($committee_filter !== '') {
     $where[] = 'p.committee = ?';
     $types .= 's';
     $params[] = $committee_filter;
 }
+
 if (in_array($status_filter, ['planning', 'ongoing', 'completed', 'on_hold'], true)) {
     $where[] = 'p.status = ?';
     $types .= 's';
     $params[] = $status_filter;
 }
+
 $where_sql = 'WHERE ' . implode(' AND ', $where);
 
 $projects = adm_fetch_all(
@@ -213,7 +249,13 @@ $projects = adm_fetch_all(
     $types,
     $params
 );
-$committees = adm_fetch_all($conn, 'SELECT DISTINCT committee FROM projects WHERE committee <> "" ORDER BY committee ASC');
+$committees = adm_fetch_all(
+    $conn,
+    "SELECT DISTINCT committee
+     FROM officials
+     WHERE committee IS NOT NULL AND committee != ''
+     ORDER BY committee ASC"
+);
 $official_users = adm_table_exists($conn, 'users')
     ? adm_fetch_all($conn, "SELECT id, fullname, role FROM users WHERE role IN ('kagawad', 'sk_chair', 'sk_kagawad') AND status = 'active' ORDER BY fullname ASC")
     : [];
@@ -244,11 +286,24 @@ adm_page_header('Programs', 'Projects & Programs', $is_captain ? 'Manage all bar
   <div class="filter-grid">
     <div class="form-field">
       <label for="committee">Committee</label>
-      <select id="committee" name="committee" <?= $is_captain ? '' : 'disabled' ?>>
-        <option value="">All committees</option>
+      <select id="committee" name="committee"
+          <?= $user['is_captain'] ? '' : 'disabled' ?>>
+
+        <!-- Default ALL (Captain only) -->
+        <?php if ($user['is_captain']): ?>
+          <option value="" <?= $committee_filter === '' ? 'selected' : '' ?>>
+            All Committees
+          </option>
+        <?php endif; ?>
+
+        <!-- Committees list -->
         <?php foreach ($committees as $committee): ?>
-          <option value="<?= adm_e($committee['committee']) ?>" <?= $committee_filter === $committee['committee'] ? 'selected' : '' ?>><?= adm_e($committee['committee']) ?></option>
+          <option value="<?= htmlspecialchars($committee['committee']) ?>"
+            <?= $committee_filter === $committee['committee'] ? 'selected' : '' ?>>
+            <?= htmlspecialchars($committee['committee']) ?>
+          </option>
         <?php endforeach; ?>
+
       </select>
     </div>
     <div class="form-field">
@@ -267,32 +322,77 @@ adm_page_header('Programs', 'Projects & Programs', $is_captain ? 'Manage all bar
 
 <section class="details-grid">
   <section class="panel">
-    <div class="panel__header"><div><h2>All Projects</h2><p>Progress is updated manually by the assigned official.</p></div></div>
+    <div class="panel__header">
+      <div class="panel__header-actions">
+        <a class="btn btn--primary" href="project_form.php">
+          <i class="fa-solid fa-plus"></i> Add New Program
+        </a>
+      </div>
+    </div>
+
     <?php if ($projects): ?>
       <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>Project</th><th>Committee</th><th>Status</th><th>Dates</th><th>Budget</th><th>Progress</th><th>Actions</th></tr></thead>
+          <thead>
+            <tr>
+              <th>Program Name</th>
+              <th>Category</th>
+              <th>Status</th>
+              <th>Start Date</th>
+              <th>End Date</th>
+              <th>Progress %</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
           <tbody>
             <?php foreach ($projects as $project): ?>
               <tr>
-                <td><strong><?= adm_e($project['title']) ?></strong><small><?= adm_e($project['category']) ?> - <?= adm_e($project['assigned_name'] ?: 'Unassigned') ?></small></td>
-                <td><?= adm_e($project['committee']) ?></td>
-                <td><span class="status-badge status-badge--<?= adm_e(adm_status_class($project['status'])) ?>"><?= adm_e(adm_status_label($project['status'])) ?></span></td>
-                <td><?= adm_e(adm_date($project['start_date'])) ?><small>Target: <?= adm_e(adm_date($project['target_end_date'])) ?></small></td>
-                <td><?= $project['estimated_budget'] !== null ? 'PHP ' . adm_e(number_format((float)$project['estimated_budget'], 2)) : 'N/A' ?></td>
                 <td>
-                  <div class="progress-meter progress-meter--small"><span style="width: <?= adm_e((int)$project['progress_percent']) ?>%"></span></div>
+                  <strong><?= adm_e($project['title']) ?></strong>
+                  <small><?= adm_e($project['committee']) ?> — <?= adm_e($project['assigned_name'] ?: 'Unassigned') ?></small>
+                </td>
+                <td><?= adm_e($project['category']) ?></td>
+                <td>
+                  <span class="status-badge status-badge--<?= adm_e(adm_status_class($project['status'])) ?>">
+                    <?= adm_e(adm_status_label($project['status'])) ?>
+                  </span>
+                </td>
+                <td><?= adm_e(adm_date($project['start_date'])) ?></td>
+                <td><?= adm_e(adm_date($project['target_end_date'])) ?></td>
+                <td>
+                  <div class="progress-meter progress-meter--small">
+                    <span style="width: <?= adm_e((int)$project['progress_percent']) ?>%"></span>
+                  </div>
                   <small><?= adm_e((int)$project['progress_percent']) ?>%</small>
                 </td>
                 <td>
                   <div class="table-actions">
-                    <a class="btn btn--small" href="projects.php?edit=<?= adm_e($project['id']) ?>"><i class="fa-solid fa-pen"></i> Edit</a>
-                    <form method="post" data-disable-on-submit>
-                      <input type="hidden" name="csrf_token" value="<?= adm_e($csrf) ?>">
-                      <input type="hidden" name="action" value="archive_project">
-                      <input type="hidden" name="project_id" value="<?= adm_e($project['id']) ?>">
-                      <button class="btn btn--danger btn--small" type="submit"><i class="fa-solid fa-box-archive"></i> Archive</button>
-                    </form>
+                    <!-- View Details -->
+                    <a class="btn btn--small"
+                       href="project_detail.php?id=<?= adm_e($project['id']) ?>"
+                       title="View Details">
+                      <i class="fa-solid fa-eye"></i>
+                    </a>
+                    <!-- Edit -->
+                    <a class="btn btn--small"
+                       href="project_form.php?id=<?= adm_e($project['id']) ?>"
+                       title="Edit">
+                      <i class="fa-solid fa-pen"></i>
+                    </a>
+                    <!-- Photo Gallery -->
+                    <a class="btn btn--small"
+                       href="project_photos.php?id=<?= adm_e($project['id']) ?>"
+                       title="Photo Gallery">
+                      <i class="fa-solid fa-images"></i>
+                    </a>
+                    <!-- Archive (triggers confirmation modal) -->
+                    <button class="btn btn--danger btn--small js-archive-btn"
+                            type="button"
+                            title="Archive"
+                            data-id="<?= adm_e($project['id']) ?>"
+                            data-name="<?= adm_e($project['title']) ?>">
+                      <i class="fa-solid fa-box-archive"></i>
+                    </button>
                   </div>
                 </td>
               </tr>
@@ -301,55 +401,68 @@ adm_page_header('Programs', 'Projects & Programs', $is_captain ? 'Manage all bar
         </table>
       </div>
     <?php else: ?>
-      <div class="empty-state"><i class="fa-solid fa-diagram-project"></i><strong>No projects found</strong><span>Create a project or adjust filters.</span></div>
+      <div class="empty-state">
+        <i class="fa-solid fa-diagram-project"></i>
+        <strong>No programs found</strong>
+        <span>Add a new program or adjust filters.</span>
+      </div>
     <?php endif; ?>
   </section>
-
-  <form class="form-panel" method="post" enctype="multipart/form-data" data-disable-on-submit>
-    <input type="hidden" name="csrf_token" value="<?= adm_e($csrf) ?>">
-    <input type="hidden" name="action" value="save_project">
-    <input type="hidden" name="project_id" value="<?= adm_e($edit_project['id'] ?? 0) ?>">
-    <h2><?= $edit_project ? 'Edit Project' : 'Add New Project' ?></h2>
-    <div class="form-section">
-      <div class="form-grid" style="grid-template-columns: 1fr;">
-        <div class="form-field"><label for="title">Project Title</label><input id="title" name="title" type="text" value="<?= adm_e($edit_project['title'] ?? '') ?>" required></div>
-        <div class="form-field"><label for="form_committee">Committee</label><input id="form_committee" name="committee" type="text" value="<?= adm_e($edit_project['committee'] ?? ($is_captain ? '' : $own_committee)) ?>" <?= $is_captain ? '' : 'readonly' ?> required></div>
-        <div class="form-field">
-          <label for="assigned_user_id">Assigned Kagawad</label>
-          <select id="assigned_user_id" name="assigned_user_id">
-            <option value="0">Unassigned</option>
-            <?php foreach ($official_users as $official_user): ?>
-              <option value="<?= adm_e($official_user['id']) ?>" <?= (int)($edit_project['assigned_user_id'] ?? 0) === (int)$official_user['id'] ? 'selected' : '' ?>><?= adm_e($official_user['fullname']) ?></option>
-            <?php endforeach; ?>
-          </select>
-        </div>
-        <div class="form-field">
-          <label for="category">Category</label>
-          <select id="category" name="category" required>
-            <?php foreach (['Infrastructure', 'Health', 'Education', 'Livelihood', 'Environment', 'Peace & Order'] as $category): ?>
-              <option value="<?= adm_e($category) ?>" <?= ($edit_project['category'] ?? '') === $category ? 'selected' : '' ?>><?= adm_e($category) ?></option>
-            <?php endforeach; ?>
-          </select>
-        </div>
-        <div class="form-field"><label for="description">Description</label><textarea id="description" name="description" required><?= adm_e($edit_project['description'] ?? '') ?></textarea></div>
-        <div class="form-field">
-          <label for="project_status">Status</label>
-          <select id="project_status" name="status">
-            <?php foreach (['planning', 'ongoing', 'completed', 'on_hold'] as $status): ?>
-              <option value="<?= adm_e($status) ?>" <?= ($edit_project['status'] ?? 'planning') === $status ? 'selected' : '' ?>><?= adm_e(adm_status_label($status)) ?></option>
-            <?php endforeach; ?>
-          </select>
-        </div>
-        <div class="form-field"><label for="start_date">Start Date</label><input id="start_date" name="start_date" type="date" value="<?= adm_e($edit_project['start_date'] ?? '') ?>" required></div>
-        <div class="form-field"><label for="target_end_date">Target End Date</label><input id="target_end_date" name="target_end_date" type="date" value="<?= adm_e($edit_project['target_end_date'] ?? '') ?>" required></div>
-        <div class="form-field"><label for="estimated_budget">Estimated Budget</label><input id="estimated_budget" name="estimated_budget" type="number" min="0" step="0.01" value="<?= adm_e($edit_project['estimated_budget'] ?? '') ?>"></div>
-        <div class="form-field"><label for="progress_percent">Progress %</label><input id="progress_percent" name="progress_percent" type="number" min="0" max="100" value="<?= adm_e($edit_project['progress_percent'] ?? 0) ?>"></div>
-        <div class="form-field"><label for="photos">Photos</label><input id="photos" name="photos[]" type="file" accept="image/png,image/jpeg,image/webp" multiple></div>
-        <button class="btn btn--primary" type="submit"><i class="fa-solid fa-floppy-disk"></i> Save Project</button>
-        <?php if ($edit_project): ?><a class="btn" href="projects.php"><i class="fa-solid fa-plus"></i> Add New Instead</a><?php endif; ?>
-      </div>
-    </div>
-  </form>
 </section>
+
+<!-- Archive Confirmation Modal -->
+<div class="modal" id="archive-modal" role="dialog" aria-modal="true" aria-labelledby="archive-modal-title" hidden>
+  <div class="modal__backdrop js-modal-close"></div>
+  <div class="modal__box">
+    <div class="modal__header">
+      <h3 id="archive-modal-title"><i class="fa-solid fa-box-archive"></i> Archive Program</h3>
+      <button class="modal__close js-modal-close" type="button" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal__body">
+      <p>Are you sure you want to archive <strong id="archive-modal-name"></strong>?</p>
+      <p class="text-muted">The program will be hidden from active lists but not permanently deleted.</p>
+    </div>
+    <div class="modal__footer">
+      <form method="post" id="archive-modal-form">
+        <input type="hidden" name="csrf_token" value="<?= adm_e($csrf) ?>">
+        <input type="hidden" name="action" value="archive_project">
+        <input type="hidden" name="project_id" id="archive-modal-project-id" value="">
+        <button class="btn js-modal-close" type="button">Cancel</button>
+        <button class="btn btn--danger" type="submit">
+          <i class="fa-solid fa-box-archive"></i> Archive
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  // Archive modal trigger
+  document.querySelectorAll('.js-archive-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var modal = document.getElementById('archive-modal');
+      document.getElementById('archive-modal-project-id').value = btn.dataset.id;
+      document.getElementById('archive-modal-name').textContent  = btn.dataset.name;
+      modal.hidden = false;
+      modal.querySelector('.modal__box').focus();
+    });
+  });
+
+  // Close modal on backdrop / close button
+  document.querySelectorAll('.js-modal-close').forEach(function (el) {
+    el.addEventListener('click', function () {
+      document.getElementById('archive-modal').hidden = true;
+    });
+  });
+
+  // Close on Escape key
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      document.getElementById('archive-modal').hidden = true;
+    }
+  });
+})();
+</script>
 
 <?php adm_page_end(); ?>

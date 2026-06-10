@@ -1,7 +1,7 @@
 <?php
 require_once __DIR__ . '/includes/admin_layout.php';
 
-$user = adm_require_admin($conn, ['captain', 'secretary']);
+$user = adm_require_admin($conn, ['captain', 'secretary', 'kagawad']);
 $csrf = adm_action_token();
 $categories = ['all', 'health', 'events', 'ordinance', 'programs', 'emergency', 'notice', 'general'];
 

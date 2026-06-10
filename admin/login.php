@@ -118,14 +118,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION['fullname'] = $user['fullname'];
             $_SESSION['role'] = $role;
 
+            $committee = null;
+
+            $stmt_official = $conn->prepare(
+              "SELECT committee, position
+              FROM officials
+              WHERE user_id = ? AND is_active = 1
+              LIMIT 1"
+            );
+
+            if ($stmt_official) {
+              $user_id = (int)$user['id'];
+              $stmt_official->bind_param('i', $user_id);
+              $stmt_official->execute();
+
+              $official = $stmt_official->get_result()->fetch_assoc();
+
+              if ($official) {
+                $_SESSION['committee'] = $official['committee'];
+                $_SESSION['position']  = $official['position'];
+              }
+
+              $stmt_official->close();
+            }
+
             if ($conn && $conn->query("SHOW COLUMNS FROM users LIKE 'last_login_at'")->num_rows > 0) {
-                $update = $conn->prepare('UPDATE users SET last_login_at = NOW() WHERE id = ?');
-                if ($update) {
-                    $user_id = (int)$user['id'];
-                    $update->bind_param('i', $user_id);
-                    $update->execute();
-                    $update->close();
-                }
+              $update = $conn->prepare('UPDATE users SET last_login_at = NOW() WHERE id = ?');
+              if ($update) {
+                $user_id = (int)$user['id'];
+                $update->bind_param('i', $user_id);
+                $update->execute();
+                $update->close();
+              }
             }
             $audit_table = $conn ? $conn->query("SHOW TABLES LIKE 'audit_logs'") : false;
             if ($audit_table && $audit_table->num_rows > 0) {

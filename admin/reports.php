@@ -1,7 +1,7 @@
 <?php
 require_once __DIR__ . '/includes/admin_layout.php';
 
-$user = adm_require_admin($conn, ['captain', 'secretary', 'treasurer']);
+$user = adm_require_admin($conn, ['captain', 'secretary', 'treasurer', 'kagawad']);
 $role = strtolower(trim((string)($user['role'] ?? '')));
 $is_captain = $role === 'captain';
 $report_types = [
