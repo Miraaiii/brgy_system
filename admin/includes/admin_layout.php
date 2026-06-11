@@ -110,6 +110,7 @@ function adm_page_start($title, $active, array $user, $page_class = '') {
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
   <link rel="shortcut icon" href="../assets/images/logo_noveleta.png">
+  <link rel="stylesheet" href="assets/css/kagawad.css">
   <link rel="stylesheet" href="assets/css/secretary.css?v=20260607b">
   <script>
     (function () {
